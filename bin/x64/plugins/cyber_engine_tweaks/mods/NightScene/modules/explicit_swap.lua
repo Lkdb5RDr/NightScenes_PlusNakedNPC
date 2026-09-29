@@ -75,6 +75,12 @@ local function unhideComponents(hidden)
     end
 end
 
+-- Exposed so the spawner can hide the real V with the same mechanism. This is
+-- the one approach confirmed working in-game; the chunkMask/Toggle/isEnabled
+-- combination used elsewhere did not hold on the player.
+ExplicitSwap.HideEntity = hideEntity
+ExplicitSwap.UnhideComponents = unhideComponents
+
 -- ------------------------------------------------------------
 --  SWAP LIFECYCLE
 -- ------------------------------------------------------------

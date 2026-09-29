@@ -12,6 +12,7 @@ local Config = {}
 Config.defaults = {
     enabled = true,
     defaultCameraMode = 0,       -- 0=FirstPerson, 1=ThirdPerson, 2=Cinematic, 3=Free
+    keepHairInFP = false,        -- true = keep the clone's hair visible in first person
     defeatEnabled = true,
     defeatHealthThreshold = 0.15, -- 15% health triggers defeat (leaves margin so burst damage can't slip past the 0.2s poll before reaching 0 HP)
     npcInteractionEnabled = true,
@@ -103,6 +104,7 @@ function Config.SyncToRedscript()
         Game['NightSceneAPI::SetDefeatMoneyLoss;Float'](Config.current.defeatMoneyLoss)
         Game['NightSceneAPI::SetDefeatMoneyLossIsPercent;Bool'](Config.current.defeatMoneyLossIsPercent)
         Game['NightSceneAPI::SetPlayerPosition;NightScenePlayerPosition'](Config.current.playerPosition)
+        Game['NightSceneAPI::SetDefaultCameraMode;NightSceneCameraMode'](Config.current.defaultCameraMode)
         -- Commented out: SyncToRedscript now runs every frame the settings menu
         -- is open (so changes apply live), which spammed the log dozens of
         -- times per second.

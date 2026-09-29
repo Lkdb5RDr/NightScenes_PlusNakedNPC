@@ -1,1 +1,1 @@
-{"stripHeadwear":true,"stripAccessories":true,"bodyMeshOverrides":{"male_average":"","male_big":"","female_average":""},"showUI":true,"meshSwapEnabled":true,"debugMode":true,"enabled":true,"cleanupIntervalSeconds":5}
+{"showUI":true,"enabled":true,"debugMode":true,"meshSwapEnabled":true,"cleanupIntervalSeconds":5,"stripHeadwear":true,"stripAccessories":true,"bodyMeshOverrides":{"female_average":"","male_average":"","male_big":""}}

@@ -133,9 +133,35 @@ public abstract class NightSceneAPI {
         NightSceneServices.Get().SceneManager().SetCameraMode(mode);
     }
 
-    /// Cycle to the next cinematic camera preset.
+    /// Cycle to the next cinematic camera preset. From any other mode this
+    /// enters Cinematic first, then steps through the presets on later calls.
     public static func NextCameraPreset() -> Void {
-        NightSceneServices.Get().CameraController().NextPreset();
+        NightSceneServices.Get().CameraController().TriggerNextCameraAngle();
+    }
+
+    /// Step through the interactive camera modes: FirstPerson -> ThirdPerson
+    /// -> Free -> FirstPerson. Cinematic is reached via NextCameraPreset.
+    public static func CycleCameraMode() -> Void {
+        NightSceneServices.Get().CameraController().CycleInteractiveCamera();
+    }
+
+    /// Which cinematic preset is selected, and what they're called -- so the
+    /// Lua camera can label and mirror the current angle.
+    public static func GetCameraPresetIndex() -> Int32 {
+        return NightSceneServices.Get().CameraController().GetPresetIndex();
+    }
+
+    public static func SetCameraPresetIndex(index: Int32) -> Void {
+        NightSceneServices.Get().CameraController().SetPresetIndex(index);
+    }
+
+    public static func GetCameraPresetNames() -> array<String> {
+        return NightSceneServices.Get().CameraController().GetPresetNames();
+    }
+
+    /// Default camera mode a scene starts in.
+    public static func SetDefaultCameraMode(mode: NightSceneCameraMode) -> Void {
+        NightSceneServices.Get().SceneManager().GetConfig().defaultCameraMode = mode;
     }
 
     // ============================================================

@@ -50,6 +50,20 @@ if not ok6 then
     ExplicitMatcher = { FindForNPC = function() return nil, { reason = "matcher failed to load" } end, DebugLookAt = function() end }
 end
 
+-- Scene camera: a dedicated camera entity driven every frame while a scene
+-- runs. Four modes -- first person on the clone's head bone, third-person
+-- orbit, cinematic presets, and free cam.
+local okCam, FPCamera = pcall(require, "modules/fp_camera")
+if not okCam then
+    print("[NightScene] ERROR loading camera module: " .. tostring(FPCamera))
+    FPCamera = {
+        Spawn = function() end, OnUpdate = function() end, HandleInput = function() end,
+        CycleMode = function() end, NextPreset = function() end, SetMode = function() end,
+        Deactivate = function() end, Despawn = function() end,
+        active = false, mode = 0, entityID = nil,
+    }
+end
+
 -- Temporary: NPC hiding experiments for the explicit-entity swap.
 local ok7, HideTest = pcall(require, "modules/hide_test")
 if not ok7 then
@@ -60,6 +74,15 @@ end
 -- Module-level state
 local isInitialized = false
 local isInGame = false
+
+-- Clone head visibility tracking for the first-person camera (see onUpdate).
+local lastCloneHeadEntityID = nil
+local lastCloneHeadVisible = nil
+local cloneHeadHideWarmup = nil
+local headCheckTick = 0
+
+-- Frames elapsed in the current scene, used to re-apply hiding periodically.
+local sceneTick = 0
 
 -- ============================================================
 --  CET LIFECYCLE CALLBACKS
@@ -78,6 +101,17 @@ registerForEvent("onInit", function()
     -- Initialize UI with config + anim toggle references
     UI.Init(Config, AnimToggles)
 
+    -- Mouse look for the scene camera. Only consumed while the camera is
+    -- active, so normal play is unaffected.
+    Observe("PlayerPuppet", "OnAction", function(_self, action)
+        if not FPCamera.active then return end
+        pcall(function()
+            local actionName = Game.NameToString(action:GetName(action))
+            local actionType = action:GetType(action).value
+            FPCamera.HandleInput(actionName, actionType, action)
+        end)
+    end)
+
     isInitialized = true
     print("[NightScene] CET module initialized")
 end)
@@ -88,6 +122,7 @@ registerForEvent("onShutdown", function()
     if isInitialized then
         Config.Save()
     end
+    pcall(FPCamera.Despawn)
     print("[NightScene] CET module shut down")
 end)
 
@@ -156,6 +191,77 @@ registerForEvent("onUpdate", function(deltaTime)
         end
     end)
 
+    -- Drive the scene camera. Spawns on first frame of a scene, then updates
+    -- every frame; torn down by the cleanup block below when the scene ends.
+    pcall(function()
+        if not Game['NightSceneAPI::IsSceneActive;']() then return end
+
+        local player = Game.GetPlayer()
+        if not player then return end
+
+        local mgr = Game['NightSceneServices::Get;']():SceneManager()
+        local scene = mgr:GetActiveScene()
+        if not scene then return end
+
+        local originYaw = 0.0
+        if scene.sceneOrientation then
+            originYaw = scene.sceneOrientation:ToEulerAngles().yaw
+        end
+
+        -- In first person the camera sits inside the clone's head, so its head
+        -- has to be hidden; every other mode shows it. Only touched when the
+        -- mode or the clone actually changes -- this runs every frame.
+        if Spawner.vClone then
+            local headVisible = (FPCamera.mode ~= 0)
+            if lastCloneHeadEntityID ~= Spawner.vCloneID or lastCloneHeadVisible ~= headVisible then
+                lastCloneHeadEntityID = Spawner.vCloneID
+                lastCloneHeadVisible = headVisible
+                Spawner.SetCloneHeadVisible(Spawner.vClone, headVisible)
+                -- Head meshes stream in over several frames, so re-apply for a
+                -- short while or late arrivals show up inside the camera.
+                if not headVisible then cloneHeadHideWarmup = 60 end
+            elseif not headVisible then
+                if cloneHeadHideWarmup and cloneHeadHideWarmup > 0 then
+                    cloneHeadHideWarmup = cloneHeadHideWarmup - 1
+                    Spawner.SetCloneHeadVisible(Spawner.vClone, false)
+                elseif (headCheckTick % 30) == 0 then
+                    -- Mesh swaps (NakedNPC, appearance changes) can restore
+                    -- hidden components later; catch those periodically.
+                    Spawner.SetCloneHeadVisible(Spawner.vClone, false)
+                end
+                headCheckTick = headCheckTick + 1
+            end
+        else
+            lastCloneHeadEntityID = nil
+            lastCloneHeadVisible = nil
+            cloneHeadHideWarmup = nil
+            headCheckTick = 0
+        end
+
+        -- Keep the real V hidden. Hiding once at scene start hasn't held: the
+        -- outfit system, appearance changes and streaming all rebuild mesh
+        -- components afterwards, and each rebuild brings V back. Rather than
+        -- guess which one is responsible, re-apply periodically for as long as
+        -- the scene runs. Quiet, or it would flood the log.
+        sceneTick = sceneTick + 1
+        if (sceneTick % 30) == 0 then
+            pcall(Spawner.HidePlayer)
+        end
+
+        if not FPCamera.entityID then
+            -- Start each scene in the configured mode. The Lua camera is what
+            -- actually drives the view, so without this the setting only ever
+            -- reached Redscript's scene.cameraMode and nothing acted on it --
+            -- every scene opened in first person regardless.
+            FPCamera.SetMode(Config.current.defaultCameraMode or 0)
+
+            local yaw = player:GetWorldOrientation():ToEulerAngles().yaw
+            FPCamera.Spawn(player:GetWorldPosition(), yaw)
+        end
+
+        FPCamera.OnUpdate(nil, nil, Spawner.vClone, scene.scenePosition, originYaw)
+    end)
+
     -- Auto-cleanup: detect when Redscript scene ends (auto-advance timer expired)
     -- and trigger Lua cleanup if spawner still has active entities
     pcall(function()
@@ -163,6 +269,8 @@ registerForEvent("onUpdate", function(deltaTime)
             local isActive = Game['NightSceneAPI::IsSceneActive;']()
             if not isActive then
                 print("[NightScene] Scene ended (auto-advance), triggering Lua cleanup...")
+                sceneTick = 0
+                pcall(FPCamera.Despawn)
                 Spawner.Cleanup()
             end
         end
@@ -276,6 +384,7 @@ registerHotkey("ns_cancel_scene", "NightScene: Cancel Scene", function()
     pcall(function()
         local isActive = Game['NightSceneAPI::IsSceneActive;']()
         if isActive then
+            pcall(FPCamera.Despawn)
             Spawner.Cleanup()
             Game['NightSceneAPI::StopScene;']()
             UI.SetSceneControlsVisible(false)
@@ -351,22 +460,26 @@ registerHotkey("ns_speed_down", "NightScene: Speed Down", function()
     end)
 end)
 
--- Cycle camera mode
+-- Step through the interactive camera modes: first person -> third person ->
+-- free cam. Cinematic is entered with the Next Camera Angle key below.
 registerHotkey("ns_camera_mode", "NightScene: Cycle Camera Mode", function()
     if not isInGame then return end
 
     pcall(function()
-        NightSceneAPI.NextCameraPreset()
-        print("[NightScene] Camera preset cycled")
+        local mode = FPCamera.CycleMode()
+        Game['NightSceneAPI::CycleCameraMode;']()
+        print("[NightScene] Camera mode -> " .. tostring(mode))
     end)
 end)
 
--- Cycle camera preset (for cinematic mode)
+-- Enter cinematic mode, then step through the preset angles.
 registerHotkey("ns_camera_preset", "NightScene: Next Camera Angle", function()
     if not isInGame then return end
 
     pcall(function()
-        NightSceneAPI.NextCameraPreset()
+        local preset = FPCamera.NextPreset()
+        Game['NightSceneAPI::NextCameraPreset;']()
+        print("[NightScene] Camera angle -> " .. tostring(preset))
     end)
 end)
 
@@ -398,6 +511,30 @@ return {
     ---     GetMod("NightScene").DebugComponents()
     ---     GetMod("NightScene").DebugHide("components")
     ---     GetMod("NightScene").DebugShow()
+    --- Test real-V hiding on its own, with no scene running.
+    ---     GetMod("NightScene").DebugHideV()   -- then look at V
+    ---     GetMod("NightScene").DebugShowV()
+    --- Also the escape hatch if a scene ever leaves V invisible.
+    DebugHideV = function()
+        local added, total = Spawner.HidePlayer()
+        print("[NightScene] Hid V: " .. tostring(added) .. " new, "
+            .. tostring(total) .. " total components")
+    end,
+    DebugShowV = function()
+        print("[NightScene] Restored V: " .. tostring(Spawner.ShowPlayer()) .. " components")
+    end,
+
+    --- Test clone head hiding on its own, during a scene.
+    ---     GetMod("NightScene").DebugCloneHead(false)  -- hide
+    ---     GetMod("NightScene").DebugCloneHead(true)   -- restore
+    DebugCloneHead = function(visible)
+        if not Spawner.vClone then
+            print("[NightScene] No V clone -- start a scene first")
+            return
+        end
+        return Spawner.SetCloneHeadVisible(Spawner.vClone, visible ~= false)
+    end,
+
     DebugComponents = function() return HideTest.Components() end,
     DebugHide = function(mode) return HideTest.Hide(mode) end,
     DebugShow = function() return HideTest.Show() end,

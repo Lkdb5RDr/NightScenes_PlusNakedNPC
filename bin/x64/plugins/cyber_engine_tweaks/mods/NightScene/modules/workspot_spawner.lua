@@ -4,6 +4,8 @@
 -- V clone replaces real V for animation compatibility.
 -- Stripped down to minimal working state -- no hiding, no equipment stripping.
 
+local Config = require("modules/config")
+
 local WorkspotSpawner = {}
 
 -- Explicit-entity swap: NPCs covered by BONeill's explicit mod get replaced by
@@ -85,6 +87,12 @@ function WorkspotSpawner.OnUpdate()
 
                 WorkspotSpawner.vCloneID = Game.GetDynamicEntitySystem():CreateEntity(spec)
                 print("[NightScene] Spawner: Clone V spawning (player unequipped)")
+
+                -- Hide the real V only NOW, once the clone has been created
+                -- from the player's state. Hiding first produced a clone
+                -- missing the Equipment-EX outfit. The per-frame re-apply in
+                -- init.lua keeps it hidden from here on.
+                WorkspotSpawner.HidePlayer()
             end)
         end
     end
@@ -216,6 +224,436 @@ function WorkspotSpawner.OnUpdate()
     end
 end
 
+
+-- ------------------------------------------------------------
+--  CLONE HEAD VISIBILITY (first-person camera)
+-- ------------------------------------------------------------
+-- Ported from the Jonatan fork. In first-person the camera sits at the clone's
+-- head bone, so the clone's own head, face and hair have to be hidden or the
+-- view is filled with the inside of its skull. Every other camera mode shows
+-- the head normally.
+--
+-- Hiding happens in two passes because a head is assembled from two places:
+-- equipped item entities in the head attachment slots (eyes, teeth, tongue,
+-- hair, accessories), and mesh components directly on the puppet.
+
+local headSlots = {
+    "AttachmentSlots.TppHead",
+    "AttachmentSlots.Head",
+    "AttachmentSlots.Eyes",
+    "AttachmentSlots.Face",
+    "AttachmentSlots.Hair",
+    "AttachmentSlots.Beard",
+    "AttachmentSlots.HeadCyberware",
+    "AttachmentSlots.PersonalLink",
+    "AttachmentSlots.Eyewear",
+    "OutfitSlots.Head",
+    "OutfitSlots.Balaclava",
+    "OutfitSlots.Mask",
+    "OutfitSlots.Glasses",
+    "OutfitSlots.Eyes",
+    "OutfitSlots.EyeLeft",
+    "OutfitSlots.EyeRight",
+    "OutfitSlots.Wreath",
+    "OutfitSlots.EarLeft",
+    "OutfitSlots.EarRight",
+    "OutfitSlots.Face",
+    "OutfitSlots.Neckwear",
+    "OutfitSlots.Necklace",
+    "OutfitSlots.NecklaceTight",
+    "OutfitSlots.NecklaceShort",
+    "OutfitSlots.NecklaceLong",
+}
+
+local cloneHeadSavedChunkMasks = {}
+
+local function isCloneHeadOrFaceComponent(comp)
+    local cName = Game.NameToString(comp:GetName()):lower()
+    local cClass = Game.NameToString(comp:GetClassName())
+
+    -- 1. Absolute exemptions: never hide body meshes, limbs, hands, feet, or genitals
+    if cName:find("penis") or cName:find("vagina") or cName:find("genital")
+        or cName:find("groin") or cName:find("crotch") or cName:find("dicks")
+        or cName:find("t0_") or cName:find("l0_") or cName:find("s0_")
+        or cName:find("torso") or cName:find("chest") or cName:find("breast")
+        or cName:find("belly") or cName:find("arm") or cName:find("hand")
+        or cName:find("wrist") or cName:find("finger") or cName:find("leg")
+        or cName:find("foot") or cName:find("feet") or cName:find("ankle")
+        or cName:find("tpp_body") then
+        return false
+    end
+
+    -- 2. Explicit head / face / headwear / accessory prefixes
+    local p3 = cName:sub(1, 3)
+    if p3 == "h0_" or p3 == "h1_" or p3 == "h2_" or p3 == "hx_" or p3 == "ht_" or p3 == "he_" or p3 == "hh_" or p3 == "i1_" then
+        return true
+    end
+
+    -- 3. Keywords matching head, hair, face, facial features, facial accessories, and eyewear
+    if cName:find("head") or cName:find("hair") or cName:find("beard")
+        or cName:find("eye") or cName:find("cornea") or cName:find("sclera") or cName:find("pupil") or cName:find("iris") or cName:find("lash") or cName:find("brow")
+        or cName:find("teeth") or cName:find("tooth") or cName:find("tongue") or cName:find("mouth") or cName:find("oral") or cName:find("lip") or cName:find("jaw")
+        or cName:find("face") or cName:find("nose") or cName:find("cheek") or cName:find("chin")
+        or cName:find("ear") or cName:find("piercing") or cName:find("earring")
+        or cName:find("necklace") or cName:find("choker") or cName:find("pendant") or cName:find("chain") or cName:find("collar")
+        or cName:find("glass") or cName:find("goggle") or cName:find("visor") or cName:find("mask") or cName:find("wreath")
+        or cName:find("balaclava") or cName:find("hat") or cName:find("cap") or cName:find("helmet")
+        or cName:find("cw_head") or cName:find("cw_face") or cName:find("kereznikov") then
+        return true
+    end
+
+    -- 4. Morph target skinned mesh components that are not body parts are head/facial morphs
+    if cClass == "entMorphTargetSkinnedMeshComponent" or cName:find("morphtarget") then
+        return true
+    end
+
+    return false
+end
+
+local function isHairComponent(comp)
+    local cName = Game.NameToString(comp:GetName()):lower()
+    -- Eyelashes and eyebrows belong to the eyes/face and should never float in FP
+    if cName:find("brow") or cName:find("lash") then
+        return false
+    end
+    if cName:sub(1, 3) == "hh_" then
+        return true
+    end
+    if cName:find("hair") or cName:find("beard") or cName:find("dread") or cName:find("braid") or cName:find("ponytail") or cName:find("bangs") then
+        if not (cName:find("arm") or cName:find("chest") or cName:find("leg") or cName:find("pubic")) then
+            return true
+        end
+    end
+    return false
+end
+
+-- Counters for the pass below; module-level so both sections add to them.
+local cloneHeadHidden, cloneHeadRestored, cloneHeadUnsaved = 0, 0, 0
+local cloneSlotHidden, cloneSlotRestored, cloneSlotUnsaved, cloneSlotsWithItem = 0, 0, 0, 0
+
+local function setCloneHeadVisible(clone, visible)
+    if not clone then return end
+
+    cloneHeadHidden, cloneHeadRestored, cloneHeadUnsaved = 0, 0, 0
+    cloneSlotHidden, cloneSlotRestored, cloneSlotUnsaved, cloneSlotsWithItem = 0, 0, 0, 0
+
+    local keepHair = (Config.current and Config.current.keepHairInFP == true)
+
+    -- 1. Hide/show all meshes on equipped head item entities (eyes, teeth, tongue, mouth, hair, accessories)
+    local ts = Game.GetTransactionSystem()
+    if ts then
+        for _, slotName in ipairs(headSlots) do
+            local slotIsHair = (slotName == "AttachmentSlots.Hair" or slotName == "AttachmentSlots.Beard")
+            local shouldHideSlot = (not visible)
+            if slotIsHair and keepHair then
+                shouldHideSlot = false
+            end
+
+            pcall(function()
+                local slotID = TweakDBID.new(slotName)
+                local itemEntity = ts:GetItemInSlot(clone, slotID)
+                if itemEntity and itemEntity.GetComponents then
+                    cloneSlotsWithItem = cloneSlotsWithItem + 1
+                    for _, c in ipairs(itemEntity:GetComponents()) do
+                        pcall(function()
+                            local cClass = Game.NameToString(c:GetClassName())
+                            local cName = Game.NameToString(c:GetName())
+                            local key = slotName .. "_" .. cName
+                            if string.find(cClass, "Mesh") or cClass == "entMorphTargetSkinnedMeshComponent" then
+                                if shouldHideSlot then
+                                    if cloneHeadSavedChunkMasks[key] == nil and c.chunkMask ~= nil then
+                                        cloneHeadSavedChunkMasks[key] = c.chunkMask
+                                    end
+                                    c.chunkMask = 0
+                                    cloneSlotHidden = cloneSlotHidden + 1
+                                else
+                                    local orig = cloneHeadSavedChunkMasks[key]
+                                    if orig ~= nil then
+                                        c.chunkMask = orig
+                                        cloneSlotRestored = cloneSlotRestored + 1
+                                    else
+                                        cloneSlotUnsaved = cloneSlotUnsaved + 1
+                                    end
+                                end
+                            end
+                            c.isEnabled = not shouldHideSlot
+                            if c.Toggle then c:Toggle(not shouldHideSlot) end
+                            if c.TemporaryHide then c:TemporaryHide(shouldHideSlot) end
+                        end)
+                    end
+                end
+            end)
+        end
+    end
+
+    -- 2. Hide/show direct head/face/accessory components on clone puppet
+    pcall(function()
+        if clone.GetComponents then
+            local comps = clone:GetComponents()
+            for _, c in ipairs(comps) do
+                local cClass = Game.NameToString(c:GetClassName())
+                if string.find(cClass, "Mesh") or cClass == "entMorphTargetSkinnedMeshComponent" then
+                    if isCloneHeadOrFaceComponent(c) then
+                        local isHair = isHairComponent(c)
+                        local shouldHideComp = (not visible)
+                        if isHair and keepHair then
+                            shouldHideComp = false
+                        end
+
+                        local cName = Game.NameToString(c:GetName())
+                        pcall(function()
+                            if shouldHideComp then
+                                if cloneHeadSavedChunkMasks[cName] == nil and c.chunkMask ~= nil then
+                                    cloneHeadSavedChunkMasks[cName] = c.chunkMask
+                                end
+                                c.chunkMask = 0
+                                cloneHeadHidden = cloneHeadHidden + 1
+                            else
+                                local orig = cloneHeadSavedChunkMasks[cName]
+                                if orig ~= nil then
+                                    c.chunkMask = orig
+                                    cloneHeadRestored = cloneHeadRestored + 1
+                                else
+                                    cloneHeadUnsaved = cloneHeadUnsaved + 1
+                                end
+                            end
+                            c.isEnabled = not shouldHideComp
+                            if c.Toggle then c:Toggle(not shouldHideComp) end
+                            if c.TemporaryHide then c:TemporaryHide(shouldHideComp) end
+                        end)
+                    end
+                end
+            end
+        end
+    end)
+
+    print(string.format(
+        "[NightScene] CloneHead: visible=%s | puppet hid %d / restored %d / unsaved %d"
+            .. " | %d head slots: hid %d / restored %d / unsaved %d",
+        tostring(visible), cloneHeadHidden, cloneHeadRestored, cloneHeadUnsaved,
+        cloneSlotsWithItem, cloneSlotHidden, cloneSlotRestored, cloneSlotUnsaved))
+end
+
+WorkspotSpawner.SetCloneHeadVisible = setCloneHeadVisible
+
+
+-- ------------------------------------------------------------
+--  REAL V VISIBILITY
+-- ------------------------------------------------------------
+-- Ported from the Jonatan fork. The clone performs the scene at V's position,
+-- so the real V has to stop rendering or you see your own body in the shot.
+--
+-- NightSceneAPI.HidePlayerForScene() is NOT enough on its own: its
+-- player.SetInvisible(true) is the optical-camo / AI-perception flag, not a
+-- visibility switch. PreventDeath has called it on every defeat scene all
+-- along and V stayed fully visible. What actually works is zeroing the mesh
+-- components' chunkMask -- on the puppet itself and on every equipped item
+-- entity -- and putting the saved masks back afterwards.
+
+local playerAllSlots = {
+    "AttachmentSlots.Head",
+    "AttachmentSlots.Eyes",
+    "AttachmentSlots.Face",
+    "AttachmentSlots.Hair",
+    "AttachmentSlots.Beard",
+    "AttachmentSlots.HeadCyberware",
+    "AttachmentSlots.Chest",
+    "AttachmentSlots.Torso",
+    "AttachmentSlots.Legs",
+    "AttachmentSlots.Feet",
+    "AttachmentSlots.Hands",
+    "AttachmentSlots.Underwear",
+    "AttachmentSlots.UnderwearBottom",
+    "AttachmentSlots.UnderwearTop",
+    "AttachmentSlots.PersonalLink",
+    "AttachmentSlots.WeaponRight",
+    "AttachmentSlots.WeaponLeft",
+    "AttachmentSlots.TppHead",
+    "OutfitSlots.Head",
+    "OutfitSlots.Balaclava",
+    "OutfitSlots.Mask",
+    "OutfitSlots.Glasses",
+    "OutfitSlots.Eyes",
+    "OutfitSlots.EyeLeft",
+    "OutfitSlots.EyeRight",
+    "OutfitSlots.Wreath",
+    "OutfitSlots.EarLeft",
+    "OutfitSlots.EarRight",
+    "OutfitSlots.Face",
+    "OutfitSlots.Necklace",
+    "OutfitSlots.Collar",
+    "OutfitSlots.TorsoInner",
+    "OutfitSlots.TorsoMiddle",
+    "OutfitSlots.TorsoOuter",
+    "OutfitSlots.Chest",
+    "OutfitSlots.Vest",
+    "OutfitSlots.BodyUnder",
+    "OutfitSlots.BodyInner",
+    "OutfitSlots.BodyMiddle",
+    "OutfitSlots.BodyOuter",
+    "OutfitSlots.Backpack",
+    "OutfitSlots.ShoulderLeft",
+    "OutfitSlots.ShoulderRight",
+    "OutfitSlots.ArmLeft",
+    "OutfitSlots.ArmRight",
+    "OutfitSlots.HandLeft",
+    "OutfitSlots.HandRight",
+    "OutfitSlots.WristLeft",
+    "OutfitSlots.WristRight",
+    "OutfitSlots.FingersLeft",
+    "OutfitSlots.FingersRight",
+    "OutfitSlots.Legs",
+    "OutfitSlots.Pants",
+    "OutfitSlots.UnderwearBottom",
+    "OutfitSlots.UnderwearTop",
+    "OutfitSlots.AnkleLeft",
+    "OutfitSlots.AnkleRight",
+    "OutfitSlots.Feet",
+}
+
+local playerSavedChunkMasks = {}
+
+local function setPlayerMeshVisible(visible, quiet)
+    local player = Game.GetPlayer()
+    if not player then
+        print("[NightScene] PlayerMesh: no player")
+        return
+    end
+
+    -- Counters: every operation below is individually pcall'd, so "the call
+    -- didn't throw" says nothing about whether it did any work. These say how
+    -- much it actually touched.
+    local puppetTotal, puppetHit, slotHit, slotsWithItem = 0, 0, 0, 0
+
+    -- 1. Direct mesh components on player puppet
+    pcall(function()
+        if player.GetComponents then
+            local comps = player:GetComponents()
+            puppetTotal = #comps
+            for _, c in ipairs(comps) do
+                pcall(function()
+                    local cClass = Game.NameToString(c:GetClassName())
+                    local cName = Game.NameToString(c:GetName())
+                    if string.find(cClass, "Mesh") or cClass == "entMorphTargetSkinnedMeshComponent" then
+                        puppetHit = puppetHit + 1
+                        if not visible then
+                            if playerSavedChunkMasks[cName] == nil and c.chunkMask ~= nil then
+                                playerSavedChunkMasks[cName] = c.chunkMask
+                            end
+                            c.chunkMask = 0
+                        else
+                            local orig = playerSavedChunkMasks[cName]
+                            if orig ~= nil then
+                                c.chunkMask = orig
+                            end
+                        end
+                        c.isEnabled = visible
+                        if c.Toggle then c:Toggle(visible) end
+                        if c.TemporaryHide then c:TemporaryHide(not visible) end
+                    end
+                end)
+            end
+        end
+    end)
+
+    -- 2. Equipped clothing / items on player via TransactionSystem
+    local ts = Game.GetTransactionSystem()
+    if ts then
+        for _, slotName in ipairs(playerAllSlots) do
+            pcall(function()
+                local slotID = TweakDBID.new(slotName)
+                local itemEntity = ts:GetItemInSlot(player, slotID)
+                if itemEntity and itemEntity.GetComponents then
+                    slotsWithItem = slotsWithItem + 1
+                    for _, c in ipairs(itemEntity:GetComponents()) do
+                        pcall(function()
+                            local cClass = Game.NameToString(c:GetClassName())
+                            local key = slotName .. "_" .. Game.NameToString(c:GetName())
+                            if string.find(cClass, "Mesh") or cClass == "entMorphTargetSkinnedMeshComponent" then
+                                slotHit = slotHit + 1
+                                if not visible then
+                                    if playerSavedChunkMasks[key] == nil and c.chunkMask ~= nil then
+                                        playerSavedChunkMasks[key] = c.chunkMask
+                                    end
+                                    c.chunkMask = 0
+                                else
+                                    local orig = playerSavedChunkMasks[key]
+                                    if orig ~= nil then
+                                        c.chunkMask = orig
+                                    end
+                                end
+                                c.isEnabled = visible
+                                if c.Toggle then c:Toggle(visible) end
+                                if c.TemporaryHide then c:TemporaryHide(not visible) end
+                            end
+                        end)
+                    end
+                end
+            end)
+        end
+    end
+
+    -- 3. Game-level visibility flags
+    pcall(function() player:SetInvisible(not visible) end)
+    pcall(function() if player.UpdateVisibility then player:UpdateVisibility() end end)
+
+    if not quiet then
+        print(string.format(
+            "[NightScene] PlayerMesh: visible=%s | puppet %d/%d mesh comps | %d slots with items, %d mesh comps",
+            tostring(visible), puppetHit, puppetTotal, slotsWithItem, slotHit))
+    end
+end
+
+WorkspotSpawner.SetPlayerMeshVisible = setPlayerMeshVisible
+
+-- Components on the real V currently hidden for a scene, so they can be put
+-- back. Kept as a list of component handles rather than saved chunk masks --
+-- TemporaryHide(false) restores whatever the component's own state was.
+WorkspotSpawner.hiddenPlayerComponents = {}
+
+--- Hide the real V using the SAME mechanism as the NPC swap, which is the one
+--- approach confirmed working in this game: TemporaryHide(true) on every
+--- visual component, enumerated through Codeware's GetComponents().
+---
+--- The chunkMask/isEnabled/Toggle approach ported from the Jonatan fork
+--- reported hiding 65 components and V stayed visible regardless of when it
+--- ran, so it is no longer used for the player.
+---
+--- Safe to call repeatedly: already-hidden components are simply hidden again,
+--- and newly streamed-in ones get picked up and added to the restore list.
+function WorkspotSpawner.HidePlayer()
+    local player = Game.GetPlayer()
+    if not player then return 0 end
+
+    local hidden = ExplicitSwap.HideEntity(player)
+    if not hidden then
+        print("[NightScene] Spawner: could not enumerate V's components")
+        return 0
+    end
+
+    -- Merge, skipping components already tracked, so repeated calls don't grow
+    -- the list without bound.
+    local known = {}
+    for _, comp in ipairs(WorkspotSpawner.hiddenPlayerComponents) do known[comp] = true end
+    local added = 0
+    for _, comp in ipairs(hidden) do
+        if not known[comp] then
+            table.insert(WorkspotSpawner.hiddenPlayerComponents, comp)
+            added = added + 1
+        end
+    end
+
+    return added, #WorkspotSpawner.hiddenPlayerComponents
+end
+
+--- Put the real V back.
+function WorkspotSpawner.ShowPlayer()
+    local count = #WorkspotSpawner.hiddenPlayerComponents
+    ExplicitSwap.UnhideComponents(WorkspotSpawner.hiddenPlayerComponents)
+    WorkspotSpawner.hiddenPlayerComponents = {}
+    return count
+end
+
 local function getVCloneRecordID()
     local gender = Game.GetPlayer():GetResolvedGenderName()
     local isFemale = tostring(gender):find("Female")
@@ -280,6 +718,28 @@ function WorkspotSpawner.SpawnAndPlay()
             print("[NightScene] Spawner: Player unequipped for naked Clone V")
         end
 
+        -- Hide the real V, in this order: the unequip above swaps V's outfit,
+        -- which REBUILDS their mesh components -- hiding before it just gets
+        -- undone. (Hiding first is exactly what failed: the counters showed 65
+        -- components hidden and 0 slot items resolved, then the outfit change
+        -- repopulated them and V stayed visible.)
+        --
+        -- HidePlayerForScene covers the gameplay side only (threat lists,
+        -- movement lock); its SetInvisible is the optical-camo flag and does
+        -- not stop V rendering. The mesh pass is what actually hides them.
+        -- Gameplay side only (threat lists, movement lock). The visual hide is
+        -- deliberately NOT done here: the clone is built from the player's
+        -- current state, so hiding V's components first meant the clone came
+        -- out without the Equipment-EX outfit. It runs once the clone exists.
+        pcall(Game['NightSceneAPI::HidePlayerForScene;'])
+
+        -- Ghost the player so the clone can't be shoved around by V's collision.
+        pcall(function()
+            local bump = Game.GetPlayer():GetBumpComponent()
+            if bump then bump:Toggle(false) end
+        end)
+        print("[NightScene] Spawner: real V untargetable (visual hide follows clone spawn)")
+
         -- Don't spawn the clone in the same frame as the unequip. The clone is
         -- built from the player's CURRENT equipment state, and Equipment-EX's
         -- LoadOutfit doesn't apply instantly -- so spawning immediately races
@@ -288,7 +748,12 @@ function WorkspotSpawner.SpawnAndPlay()
         -- in OnUpdate; the workspot entity streams in during the wait, so this
         -- usually costs no extra time at all.
         WorkspotSpawner.pendingCloneRecord = recordID
-        WorkspotSpawner.pendingCloneDelay = 20
+        -- 60 frames (~1s). Equipment-EX applies its outfit over an unknown
+        -- number of frames and the clone is built from whatever the player
+        -- looks like at spawn time, so too short a wait yields a clone wearing
+        -- only part of the outfit. Raised from 20 while testing how much of
+        -- the outfit actually transfers.
+        WorkspotSpawner.pendingCloneDelay = 60
         print("[NightScene] Spawner: Clone V spawn deferred (waiting for outfit to apply)")
     end
 
@@ -447,6 +912,15 @@ function WorkspotSpawner.Cleanup()
     -- StopInDevice so nothing is despawned mid-workspot.
     pcall(function() ExplicitSwap.RestoreAll() end)
 
+    -- Put the real V's meshes back. Done before the re-equip below so the
+    -- restored chunk masks apply to the body that's about to be re-dressed.
+    local restored = WorkspotSpawner.ShowPlayer()
+    print("[NightScene] Spawner: real V restored (" .. tostring(restored) .. " components)")
+    pcall(function()
+        local bump = Game.GetPlayer():GetBumpComponent()
+        if bump then bump:Toggle(true) end
+    end)
+
     -- Re-equip player clothing (was unequipped for Clone V naked spawn)
     if WorkspotSpawner.playerWasUnequipped then
         if nakedMod and nakedMod.ReequipPlayer then
@@ -485,6 +959,15 @@ function WorkspotSpawner.Cleanup()
     WorkspotSpawner.pendingCloneDelay = nil
     WorkspotSpawner.pendingCloneRecord = nil
     WorkspotSpawner.npcActorIDs = {}
+
+    -- The clone is gone, so chunk masks saved off it are meaningless now --
+    -- keeping them would let a stale mask be restored onto the NEXT clone.
+    cloneHeadSavedChunkMasks = {}
+
+    -- Player masks were restored above; clear them so a later scene re-reads
+    -- the CURRENT equipment rather than reapplying what V wore last time.
+    playerSavedChunkMasks = {}
+
     print("[NightScene] Spawner: Cleaned up (player restore pending)")
 end
 
