@@ -64,13 +64,6 @@ if not okCam then
     }
 end
 
--- Temporary: NPC hiding experiments for the explicit-entity swap.
-local ok7, HideTest = pcall(require, "modules/hide_test")
-if not ok7 then
-    print("[NightScene] ERROR loading hide test module: " .. tostring(HideTest))
-    HideTest = { Hide = function() end, Show = function() end, Components = function() end }
-end
-
 -- Module-level state
 local isInitialized = false
 local isInGame = false
@@ -507,14 +500,10 @@ return {
     ---     GetMod("NightScene").DebugExplicitMatch()
     DebugExplicitMatch = function() return ExplicitMatcher.DebugLookAt() end,
 
-    --- NPC hiding experiments (temporary -- see modules/hide_test.lua).
-    ---     GetMod("NightScene").DebugComponents()
-    ---     GetMod("NightScene").DebugHide("components")
-    ---     GetMod("NightScene").DebugShow()
-    --- Test real-V hiding on its own, with no scene running.
-    ---     GetMod("NightScene").DebugHideV()   -- then look at V
+    --- Hide or restore the real V. Mostly an escape hatch: if a scene ever
+    --- ends badly and leaves V invisible, DebugShowV() puts them back.
+    ---     GetMod("NightScene").DebugHideV()
     ---     GetMod("NightScene").DebugShowV()
-    --- Also the escape hatch if a scene ever leaves V invisible.
     DebugHideV = function()
         local added, total = Spawner.HidePlayer()
         print("[NightScene] Hid V: " .. tostring(added) .. " new, "
@@ -524,9 +513,9 @@ return {
         print("[NightScene] Restored V: " .. tostring(Spawner.ShowPlayer()) .. " components")
     end,
 
-    --- Test clone head hiding on its own, during a scene.
-    ---     GetMod("NightScene").DebugCloneHead(false)  -- hide
-    ---     GetMod("NightScene").DebugCloneHead(true)   -- restore
+    --- Show or hide the V clone's head during a scene. It is hidden
+    --- automatically in first person, where the camera sits inside it.
+    ---     GetMod("NightScene").DebugCloneHead(true)
     DebugCloneHead = function(visible)
         if not Spawner.vClone then
             print("[NightScene] No V clone -- start a scene first")
@@ -534,8 +523,4 @@ return {
         end
         return Spawner.SetCloneHeadVisible(Spawner.vClone, visible ~= false)
     end,
-
-    DebugComponents = function() return HideTest.Components() end,
-    DebugHide = function(mode) return HideTest.Hide(mode) end,
-    DebugShow = function() return HideTest.Show() end,
 }
