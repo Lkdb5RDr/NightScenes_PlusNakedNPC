@@ -202,6 +202,31 @@ public abstract class NightSceneNPCFinder {
         return bestNPC;
     }
 
+    /// Nearest living NPC in any direction. Used as the last fallback when a
+    /// fatal hit has to be turned into a defeat scene and there is no hostile
+    /// or in-front candidate.
+    public static func FindNearestNPC(player: ref<PlayerPuppet>, range: Float) -> ref<ScriptedPuppet> {
+        let npcs = NightSceneNPCFinder.FindNPCsInRange(player, range);
+        let bestNPC: ref<ScriptedPuppet>;
+        let bestDist: Float = 99999.0;
+        let playerPos = player.GetWorldPosition();
+
+        let i: Int32 = 0;
+        while i < ArraySize(npcs) {
+            let npc = npcs[i];
+            if !npc.IsDead() {
+                let dist = Vector4.Distance(playerPos, npc.GetWorldPosition());
+                if dist < bestDist {
+                    bestDist = dist;
+                    bestNPC = npc;
+                }
+            }
+            i += 1;
+        }
+
+        return bestNPC;
+    }
+
     /// Check if an NPC is eligible for interaction.
     public static func IsNPCEligible(npc: ref<ScriptedPuppet>, config: ref<NightSceneConfig>) -> Bool {
         if !IsDefined(npc) {
@@ -265,10 +290,17 @@ public class NightSceneInteractionHandler extends IScriptable {
             return;
         }
 
-        // Find target NPC
+        // Find target NPC. The range comes from config -- it used to be
+        // hardcoded to 5.0, which left the "NPC Interaction Range" setting
+        // doing nothing no matter what it was set to.
+        let range = config.npcInteractionRange;
+        if range <= 0.0 {
+            range = 5.0;
+        }
+
         let targetNPC = NightSceneNPCFinder.FindLookAtNPC(player);
         if !IsDefined(targetNPC) {
-            targetNPC = NightSceneNPCFinder.FindNearestNPCInFront(player, 5.0);
+            targetNPC = NightSceneNPCFinder.FindNearestNPCInFront(player, range);
         }
 
         if !IsDefined(targetNPC) {

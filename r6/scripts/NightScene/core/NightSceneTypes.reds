@@ -371,6 +371,9 @@ public class NightSceneConfig extends IScriptable {
     // Defeat: true = defeatMoneyLoss is a percentage, false = flat eddies
     public let defeatMoneyLossIsPercent: Bool;
 
+    // Defeat: true = the player actually flatlines when the scene ends
+    public let defeatFatalMode: Bool;
+
     // Player's preferred slot in same-gender (ff) scenes -- see NightScenePlayerPosition
     public let playerPosition: NightScenePlayerPosition;
 
@@ -390,6 +393,7 @@ public class NightSceneConfig extends IScriptable {
         cfg.defeatCooldown = 30.0;
         cfg.defeatMoneyLoss = 0.0;
         cfg.defeatMoneyLossIsPercent = false;
+        cfg.defeatFatalMode = false;
         cfg.playerPosition = NightScenePlayerPosition.PositionOne;
         return cfg;
     }

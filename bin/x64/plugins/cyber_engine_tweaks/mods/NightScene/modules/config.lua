@@ -28,6 +28,7 @@ Config.defaults = {
     defeatCooldown = 30.0,       -- Seconds before defeat can trigger again
     defeatMoneyLoss = 0.0,       -- Money lost on defeat (0 = disabled)
     defeatMoneyLossIsPercent = false, -- true = percentage, false = flat eddies
+    defeatFatalMode = false,     -- true = V actually flatlines when a defeat scene ends
 
     -- Hotkeys (CET key codes)
     -- hotkeyInteract = "U",        -- Start interaction with looked-at NPC
@@ -43,13 +44,35 @@ Config.defaults = {
 -- Active configuration (loaded from file or defaults)
 Config.current = {}
 
--- Path to the config file (relative to the mod directory)
--- CET's working directory is bin/x64/, so we use the full relative path to the mod folder
-Config.filePath = "plugins/cyber_engine_tweaks/mods/NightScene/config.json"
+-- Path to the config file.
+--
+-- CET's working directory for a mod is the MOD'S OWN FOLDER, not bin/x64 as
+-- the old comment here claimed. The previous value --
+--   "plugins/cyber_engine_tweaks/mods/NightScene/config.json"
+-- -- therefore resolved to
+--   mods/NightScene/plugins/cyber_engine_tweaks/mods/NightScene/config.json
+-- and io.open(path, "w") does NOT create missing directories, so on any install
+-- where that nested tree didn't already exist the save silently failed with
+-- "Could not save config file" and settings never persisted. This is why
+-- saving appeared broken for most users.
+Config.filePath = "config.json"
+
+-- Where saves used to land. Read once on load so existing settings survive the
+-- move; never written to again.
+Config.legacyFilePath = "plugins/cyber_engine_tweaks/mods/NightScene/config.json"
 
 --- Load configuration from file, or create defaults if file doesn't exist.
 function Config.Load()
     local file = io.open(Config.filePath, "r")
+
+    -- Fall back to the old nested location so anyone who did manage to save
+    -- there keeps their settings. The next save writes to the new path.
+    local migrated = false
+    if not file then
+        file = io.open(Config.legacyFilePath, "r")
+        migrated = (file ~= nil)
+    end
+
     if file then
         local content = file:read("*all")
         file:close()
@@ -58,7 +81,12 @@ function Config.Load()
         if success and type(data) == "table" then
             -- Merge loaded values with defaults (so new config keys get default values)
             Config.current = Config.MergeWithDefaults(data)
-            print("[NightScene] Configuration loaded from file")
+            if migrated then
+                print("[NightScene] Configuration migrated from the old nested path")
+                Config.Save()
+            else
+                print("[NightScene] Configuration loaded from file")
+            end
         else
             print("[NightScene] WARN: Config file corrupted, using defaults")
             Config.current = Config.DeepCopy(Config.defaults)
@@ -103,8 +131,13 @@ function Config.SyncToRedscript()
         Game['NightSceneAPI::SetDefeatCooldown;Float'](Config.current.defeatCooldown)
         Game['NightSceneAPI::SetDefeatMoneyLoss;Float'](Config.current.defeatMoneyLoss)
         Game['NightSceneAPI::SetDefeatMoneyLossIsPercent;Bool'](Config.current.defeatMoneyLossIsPercent)
+        Game['NightSceneAPI::SetDefeatFatalMode;Bool'](Config.current.defeatFatalMode or false)
         Game['NightSceneAPI::SetPlayerPosition;NightScenePlayerPosition'](Config.current.playerPosition)
         Game['NightSceneAPI::SetDefaultCameraMode;NightSceneCameraMode'](Config.current.defaultCameraMode)
+        -- These two were missing, which is why the gender filter and
+        -- interaction range sliders in the settings menu did nothing.
+        Game['NightSceneAPI::SetNpcGenderFilter;NightSceneGender'](Config.current.npcGenderFilter)
+        Game['NightSceneAPI::SetNpcInteractionRange;Float'](Config.current.npcInteractionRange)
         -- Commented out: SyncToRedscript now runs every frame the settings menu
         -- is open (so changes apply live), which spammed the log dozens of
         -- times per second.

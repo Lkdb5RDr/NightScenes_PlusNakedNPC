@@ -330,8 +330,13 @@ public abstract class NightSceneAPI {
         player.SetInvisible(false);
         StatusEffectHelper.RemoveStatusEffect(player, t"BaseStatusEffect.intomovementLockActive");
 
-        // Also trigger defeat-specific cleanup (enemy unfreeze after grace period)
-        NightSceneDefeatHelper.RestoreFromDefeat(player);
+        // Defeat-specific cleanup -- enemy unfreeze, and the fatal flatline when
+        // that mode is on. Guarded, or an ordinary interaction scene would
+        // unfreeze hostiles it never froze, and with fatal mode enabled would
+        // kill V at the end of every scene.
+        if NightSceneServices.Get().SceneManager().WasLastSceneDefeat() {
+            NightSceneDefeatHelper.RestoreFromDefeat(player);
+        }
 
         LogChannel(n"NightScene", "Player restored from scene");
     }
@@ -596,6 +601,18 @@ public abstract class NightSceneAPI {
         NightSceneServices.Get().SceneManager().GetConfig().playerPosition = position;
     }
 
+    /// Restrict interaction to one gender. Previously unreachable: the config
+    /// field was read by the eligibility check but nothing ever set it, so the
+    /// UI's gender filter did nothing at all.
+    public static func SetNpcGenderFilter(filter: NightSceneGender) -> Void {
+        NightSceneServices.Get().SceneManager().GetConfig().npcGenderFilter = filter;
+    }
+
+    /// How far the interaction hotkey looks for an NPC, in metres.
+    public static func SetNpcInteractionRange(range: Float) -> Void {
+        NightSceneServices.Get().SceneManager().GetConfig().npcInteractionRange = range;
+    }
+
     public static func SetNpcInteractionEnabled(value: Bool) -> Void {
         NightSceneServices.Get().SceneManager().GetConfig().npcInteractionEnabled = value;
     }
@@ -614,6 +631,25 @@ public abstract class NightSceneAPI {
 
     public static func SetDefeatGracePeriod(value: Float) -> Void {
         NightSceneServices.Get().SceneManager().GetConfig().defeatGracePeriod = value;
+    }
+
+    /// When true, a defeat scene ends with V actually flatlining.
+    public static func SetDefeatFatalMode(value: Bool) -> Void {
+        NightSceneServices.Get().SceneManager().GetConfig().defeatFatalMode = value;
+    }
+
+    /// Was the last scene a player-defeat scene? Lets cleanup apply
+    /// defeat-only consequences without touching interaction scenes.
+    public static func WasLastSceneDefeat() -> Bool {
+        return NightSceneServices.Get().SceneManager().WasLastSceneDefeat();
+    }
+
+    public static func SetExecutingFatalDeath(value: Bool) -> Void {
+        NightSceneServices.Get().SceneManager().SetExecutingFatalDeath(value);
+    }
+
+    public static func IsExecutingFatalDeath() -> Bool {
+        return NightSceneServices.Get().SceneManager().IsExecutingFatalDeath();
     }
 
     public static func SetDefeatCooldown(value: Float) -> Void {

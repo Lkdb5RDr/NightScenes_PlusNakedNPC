@@ -59,6 +59,14 @@ public class NightSceneManager extends IScriptable {
     // m_pendingWorkspotSpawn, which means "build the whole scene from scratch".
     private let m_pendingWorkspotUpdate: Bool;
 
+    // What triggered the last scene, so cleanup can run defeat-only logic
+    // (money loss, fatal mode) without applying it to interaction scenes.
+    private let m_lastSceneTriggerSource: NightSceneTriggerSource;
+
+    // Set while a deliberate flatline is being executed, so the death hooks
+    // below let it through instead of intercepting it as another defeat.
+    private let m_isExecutingFatalDeath: Bool;
+
     // Game instance reference
     private let m_gameInstance: GameInstance;
 
@@ -102,6 +110,19 @@ public class NightSceneManager extends IScriptable {
 
     public func HasPendingWorkspotSpawn() -> Bool {
         return this.m_pendingWorkspotSpawn;
+    }
+
+    /// Was the last scene triggered by the player being defeated?
+    public func WasLastSceneDefeat() -> Bool {
+        return Equals(EnumInt(this.m_lastSceneTriggerSource), EnumInt(NightSceneTriggerSource.Defeat));
+    }
+
+    public func SetExecutingFatalDeath(value: Bool) -> Void {
+        this.m_isExecutingFatalDeath = value;
+    }
+
+    public func IsExecutingFatalDeath() -> Bool {
+        return this.m_isExecutingFatalDeath;
     }
 
     /// Read-and-clear: CET polls this after an animation or stage change.
@@ -191,6 +212,7 @@ public class NightSceneManager extends IScriptable {
 
         this.m_activeScene = scene;
         this.m_pendingWorkspotUpdate = false;
+        this.m_lastSceneTriggerSource = triggerSource;
 
         LogChannel(n"NightScene", "Starting scene " + ToString(scene.sceneId) + " with animation: " + animDef.id);
 

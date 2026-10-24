@@ -143,6 +143,10 @@ function UI.DrawConfigMenu()
         end
     end
 
+    cfg.keepHairInFP, _ = ImGui.Checkbox("Keep Hair in First Person", cfg.keepHairInFP)
+    ImGui.TextWrapped("The clone's head is hidden in first person so the camera isn't "
+        .. "inside it. Tick this to keep the hair visible anyway.")
+
     -- Speed
     cfg.defaultSpeed, _ = ImGui.SliderFloat("Default Speed", cfg.defaultSpeed, 0.1, 3.0, "%.1f")
 
@@ -207,6 +211,10 @@ function UI.DrawConfigMenu()
             )
         end
         ImGui.TextWrapped("Money deducted on defeat. Set to 0 to disable.")
+
+        cfg.defeatFatalMode, _ = ImGui.Checkbox("Fatal Defeat (V dies)", cfg.defeatFatalMode)
+        ImGui.TextWrapped("When on, V actually flatlines once the defeat scene ends "
+            .. "and you get the death screen. Off by default.")
     end
 
     -- NPC Interaction

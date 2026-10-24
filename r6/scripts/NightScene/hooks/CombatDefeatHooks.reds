@@ -131,18 +131,16 @@ public class NightSceneHealthMonitor extends IScriptable {
             return;
         }
 
-        // Only check when player has hostile threats (i.e. in combat)
+        // Only skip if not in combat AND health is not critical/fatal
         let trackerComp = player.GetTargetTrackerComponent();
-        if IsDefined(trackerComp) {
-            let threats = trackerComp.GetHostileThreats(false);
-            if ArraySize(threats) == 0 {
-                // Not in combat -- skip
-                this.ScheduleNext();
-                return;
-            }
-        }
+        let inCombat = IsDefined(trackerComp) && ArraySize(trackerComp.GetHostileThreats(false)) > 0;
 
         let healthPct = NightSceneDefeatHelper.GetPlayerHealthPercent(player);
+
+        if !inCombat && healthPct > config.defeatHealthThreshold {
+            this.ScheduleNext();
+            return;
+        }
 
         // Debug: log every 100 checks (~10 seconds)
         this.m_checkCount += 1;
@@ -150,8 +148,8 @@ public class NightSceneHealthMonitor extends IScriptable {
             LogChannel(n"NightScene", "Health monitor tick #" + IntToString(this.m_checkCount) + " HP=" + FloatToString(healthPct * 100.0) + "% threshold=" + FloatToString(config.defeatHealthThreshold * 100.0) + "%");
         }
 
-        // Check if health is below threshold
-        if healthPct > 0.0 && healthPct <= config.defeatHealthThreshold {
+        // Check if health is below or at threshold (including 0 HP instant heavy hits)
+        if healthPct <= config.defeatHealthThreshold {
             LogChannel(n"NightScene", "Health monitor: threshold reached! HP=" + FloatToString(healthPct * 100.0) + "% threshold=" + FloatToString(config.defeatHealthThreshold * 100.0) + "%");
 
             NightSceneDefeatHelper.PreventDeath(player);
@@ -160,13 +158,16 @@ public class NightSceneHealthMonitor extends IScriptable {
             if !IsDefined(attacker) {
                 attacker = NightSceneNPCFinder.FindNearestNPCInFront(player, 30.0);
             }
+            if !IsDefined(attacker) {
+                attacker = NightSceneNPCFinder.FindNearestNPC(player, 30.0);
+            }
 
             if IsDefined(attacker) {
                 NightSceneDefeatHelper.TriggerDefeatScene(player, attacker);
-                // Set cooldown from config (convert seconds to check count at 0.1s interval)
+                // Set cooldown from config (convert seconds to check count at 0.02s interval)
                 let cooldownSec = config.defeatCooldown;
                 if cooldownSec < 5.0 { cooldownSec = 5.0; } // minimum 5 seconds
-                this.m_cooldown = Cast<Int32>(cooldownSec / 0.1);
+                this.m_cooldown = Cast<Int32>(cooldownSec / 0.02);
             } else {
                 LogChannel(n"NightScene", "Health monitor: no NPC found for defeat scene");
             }
@@ -183,7 +184,7 @@ public class NightSceneHealthMonitor extends IScriptable {
         let delaySys = GameInstance.GetDelaySystem(gi);
         let cb = new NightSceneHealthCheckCallback();
         cb.monitor = this;
-        this.m_delayId = delaySys.DelayCallback(cb, 0.1, false);
+        this.m_delayId = delaySys.DelayCallback(cb, 0.02, false);
     }
 }
 
@@ -191,7 +192,208 @@ public class NightSceneHealthMonitor extends IScriptable {
 //  DEFEAT HELPER FUNCTIONS
 // ============================================================
 
+// ============================================================
+//  DIRECT ENGINE DEATH HOOKS
+// ============================================================
+// The health poll alone misses instant kills -- a single heavy hit can take
+// V from healthy to dead between two checks. These wrap the death pipeline
+// itself: intercepting the death event, and suppressing the death VFX, SFX,
+// state machine and menu for as long as a scene is running.
+
+@wrapMethod(PlayerPuppet)
+protected cb func OnDeath(evt: ref<gameDeathEvent>) -> Bool {
+    let mgr = NightSceneServices.Get().SceneManager();
+    if mgr.IsExecutingFatalDeath() {
+        LogChannel(n"NightScene", "OnDeath: Executing intentional fatal death sequence");
+        return wrappedMethod(evt);
+    }
+
+    let config = mgr.GetConfig();
+    if config.enabled && config.defeatEnabled {
+        if !mgr.IsSceneActive() {
+            let attacker = NightSceneNPCFinder.FindNearestHostileNPC(this, 30.0);
+            if !IsDefined(attacker) {
+                attacker = NightSceneNPCFinder.FindNearestNPCInFront(this, 30.0);
+            }
+            if !IsDefined(attacker) {
+                attacker = NightSceneNPCFinder.FindNearestNPC(this, 30.0);
+            }
+
+            if IsDefined(attacker) {
+                LogChannel(n"NightScene", "OnDeath intercepted: triggering defeat scene before flatline");
+                NightSceneDefeatHelper.PreventDeath(this);
+                NightSceneDefeatHelper.TriggerDefeatScene(this, attacker);
+                return false;
+            }
+        }
+    }
+    return wrappedMethod(evt);
+}
+
+@wrapMethod(PlayerPuppet)
+private final func UpdateHealthStateVFX(healthValue: Float) -> Void {
+    let mgr = NightSceneServices.Get().SceneManager();
+    if mgr.IsSceneActive() {
+        NightSceneDefeatHelper.KillAllScreenEffects(this);
+        return;
+    }
+    wrappedMethod(healthValue);
+}
+
+@wrapMethod(PlayerPuppet)
+private final func UpdateHealthStateSFX(healthValue: Float) -> Void {
+    let mgr = NightSceneServices.Get().SceneManager();
+    if mgr.IsSceneActive() {
+        GameInstance.GetAudioSystem(this.GetGame()).NotifyGameTone(n"InNormalHealth");
+        return;
+    }
+    wrappedMethod(healthValue);
+}
+
+@wrapMethod(DeathEvents)
+protected func OnEnter(stateContext: ref<StateContext>, scriptInterface: ref<StateGameScriptInterface>) -> Void {
+    let mgr = NightSceneServices.Get().SceneManager();
+    if mgr.IsExecutingFatalDeath() {
+        wrappedMethod(stateContext, scriptInterface);
+        return;
+    }
+    if mgr.IsSceneActive() {
+        return;
+    }
+    wrappedMethod(stateContext, scriptInterface);
+}
+
+@wrapMethod(gameuiInGameMenuGameController)
+protected cb func OnDeathScreenDelayEvent(evt: ref<DeathMenuDelayEvent>) -> Bool {
+    let mgr = NightSceneServices.Get().SceneManager();
+    // NEVER suppress if intentional fatal death is executing
+    if mgr.IsExecutingFatalDeath() {
+        return wrappedMethod(evt);
+    }
+    if mgr.IsSceneActive() {
+        LogChannel(n"NightScene", "Suppressing death screen delay event during active defeat scene");
+        return false;
+    }
+    return wrappedMethod(evt);
+}
+
+
 public abstract class NightSceneDefeatHelper {
+
+    /// Logs all currently applied status effects on the player puppet.
+    public static func LogPlayerStatusEffects(player: ref<PlayerPuppet>, stageTag: String) -> Void {
+        if !IsDefined(player) { return; }
+        let ses = GameInstance.GetStatusEffectSystem(player.GetGame());
+        if !IsDefined(ses) { return; }
+        let appliedEffects: array<ref<StatusEffect>>;
+        ses.GetAppliedEffects(player.GetEntityID(), appliedEffects);
+
+        LogChannel(n"NightScene", "==========================================================");
+        LogChannel(n"NightScene", ">>> NIGHTSCENE STATUS REPORT [" + stageTag + "] <<<");
+        LogChannel(n"NightScene", "Player Entity ID: " + EntityID.ToDebugString(player.GetEntityID()));
+        LogChannel(n"NightScene", "Total Active Effects: " + IntToString(ArraySize(appliedEffects)));
+        let i: Int32 = 0;
+        while i < ArraySize(appliedEffects) {
+            let eff = appliedEffects[i];
+            if IsDefined(eff) {
+                let rec = eff.GetRecord();
+                if IsDefined(rec) {
+                    let id = rec.GetID();
+                    let dur = eff.GetRemainingDuration();
+                    let count = eff.GetStackCount();
+                    LogChannel(n"NightScene", "  [" + IntToString(i + 1) + "] " + TDBID.ToStringDEBUG(id) + " | Dur: " + FloatToString(dur) + "s | Stacks: " + IntToString(Cast<Int32>(count)));
+                }
+            }
+            i += 1;
+        }
+        LogChannel(n"NightScene", "==========================================================");
+    }
+
+    /// Dispatches an entKillEffectEvent and stops all effect instances on an entity.
+    public static func KillEffect(obj: ref<GameObject>, effectName: CName) -> Void {
+        if !IsDefined(obj) { return; }
+        let evt = new entKillEffectEvent();
+        evt.effectName = effectName;
+        evt.breakAllLoops = true;
+        obj.QueueEvent(evt);
+        GameObjectEffectHelper.BreakEffectLoopEvent(obj, effectName);
+        GameObjectEffectHelper.StopEffectEvent(obj, effectName);
+    }
+
+    /// Extinguishes all full-screen post-processing overlays, death shaders, and elemental vignettes.
+    public static func KillAllScreenEffects(player: ref<PlayerPuppet>) -> Void {
+        if !IsDefined(player) { return; }
+        NightSceneDefeatHelper.KillEffect(player, n"fx_health_critical");
+        NightSceneDefeatHelper.KillEffect(player, n"fx_health_low");
+        NightSceneDefeatHelper.KillEffect(player, n"eyes_closing_instant");
+        NightSceneDefeatHelper.KillEffect(player, n"eyes_closed_loop");
+        NightSceneDefeatHelper.KillEffect(player, n"transition_glitch_loop");
+        NightSceneDefeatHelper.KillEffect(player, n"dying");
+        NightSceneDefeatHelper.KillEffect(player, n"death");
+        NightSceneDefeatHelper.KillEffect(player, n"low_health");
+        NightSceneDefeatHelper.KillEffect(player, n"critical_health");
+        NightSceneDefeatHelper.KillEffect(player, n"damage_screen");
+        NightSceneDefeatHelper.KillEffect(player, n"damage_screen_critical");
+        NightSceneDefeatHelper.KillEffect(player, n"blackout");
+        NightSceneDefeatHelper.KillEffect(player, n"fade_in");
+        NightSceneDefeatHelper.KillEffect(player, n"fade_out");
+        NightSceneDefeatHelper.KillEffect(player, n"hud_blackout");
+        NightSceneDefeatHelper.KillEffect(player, n"player_death_vignette");
+        NightSceneDefeatHelper.KillEffect(player, n"status_bleeding");
+        NightSceneDefeatHelper.KillEffect(player, n"status_poisoned");
+        NightSceneDefeatHelper.KillEffect(player, n"status_burning");
+        NightSceneDefeatHelper.KillEffect(player, n"status_electrocuted");
+        NightSceneDefeatHelper.KillEffect(player, n"status_emp");
+        NightSceneDefeatHelper.KillEffect(player, n"status_blinded");
+        NightSceneDefeatHelper.KillEffect(player, n"status_deafened");
+        NightSceneDefeatHelper.KillEffect(player, n"status_stunned");
+        NightSceneDefeatHelper.KillEffect(player, n"stealth_mode");
+        NightSceneDefeatHelper.KillEffect(player, n"fish_eye");
+        NightSceneDefeatHelper.KillEffect(player, n"camera_mask");
+    }
+
+    /// Strips all stacks of a specific status effect from the player.
+    public static func StripStatusEffectAllStacks(player: ref<PlayerPuppet>, id: TweakDBID) -> Void {
+        if !IsDefined(player) { return; }
+        let ses = GameInstance.GetStatusEffectSystem(player.GetGame());
+        if !IsDefined(ses) { return; }
+        ses.RemoveStatusEffect(player.GetEntityID(), id, 99u);
+        StatusEffectHelper.RemoveStatusEffect(player, id);
+    }
+
+    /// Completely strips all movement/combat locks, menu blockers, low-health glitch overlays, and invulnerability.
+    public static func RemoveAllGameplayRestrictions(player: ref<PlayerPuppet>) -> Void {
+        if !IsDefined(player) { return; }
+        NightSceneDefeatHelper.StripStatusEffectAllStacks(player, t"GameplayRestriction.NoMovement");
+        NightSceneDefeatHelper.StripStatusEffectAllStacks(player, t"GameplayRestriction.NoJump");
+        NightSceneDefeatHelper.StripStatusEffectAllStacks(player, t"GameplayRestriction.NoCrouch");
+        NightSceneDefeatHelper.StripStatusEffectAllStacks(player, t"GameplayRestriction.NoCombat");
+        NightSceneDefeatHelper.StripStatusEffectAllStacks(player, t"GameplayRestriction.NoShooting");
+        NightSceneDefeatHelper.StripStatusEffectAllStacks(player, t"GameplayRestriction.NoWeapons");
+        NightSceneDefeatHelper.StripStatusEffectAllStacks(player, t"GameplayRestriction.FastForwardLockMovement");
+        NightSceneDefeatHelper.StripStatusEffectAllStacks(player, t"GameplayRestriction.BlockAllMenu");
+        NightSceneDefeatHelper.StripStatusEffectAllStacks(player, t"GameplayRestriction.PreventLowHealthOverlay");
+        NightSceneDefeatHelper.StripStatusEffectAllStacks(player, t"BaseStatusEffect.Invulnerable");
+        NightSceneDefeatHelper.StripStatusEffectAllStacks(player, t"BaseStatusEffect.PlayerImmortal");
+        NightSceneDefeatHelper.StripStatusEffectAllStacks(player, t"Effectors.LowHealthTBH");
+        NightSceneDefeatHelper.StripStatusEffectAllStacks(player, t"Effectors.CriticalHealthTBH");
+        NightSceneDefeatHelper.StripStatusEffectAllStacks(player, t"BaseStatusEffect.LowHealth");
+        NightSceneDefeatHelper.StripStatusEffectAllStacks(player, t"BaseStatusEffect.CriticallyLowHealth");
+        NightSceneDefeatHelper.StripStatusEffectAllStacks(player, t"BaseStatusEffect.JohnnySickness");
+        NightSceneDefeatHelper.StripStatusEffectAllStacks(player, t"BaseStatusEffect.Dying");
+        NightSceneDefeatHelper.StripStatusEffectAllStacks(player, t"BaseStatusEffect.DamageScreen");
+        NightSceneDefeatHelper.StripStatusEffectAllStacks(player, t"BaseStatusEffect.DamageIndicator");
+        NightSceneDefeatHelper.StripStatusEffectAllStacks(player, t"BaseStatusEffect.NetwatcherGlitch");
+
+        StatusEffectHelper.RemoveStatusEffectsWithTag(player, n"Invulnerable");
+        StatusEffectHelper.RemoveStatusEffectsWithTag(player, n"Immortal");
+        StatusEffectHelper.RemoveStatusEffectsWithTag(player, n"Debuff");
+        StatusEffectHelper.RemoveStatusEffectsWithTag(player, n"LowHealth");
+        StatusEffectHelper.RemoveStatusEffectsWithTag(player, n"Blind");
+        StatusEffectHelper.RemoveStatusEffectsWithTag(player, n"Glitch");
+        StatusEffectHelper.RemoveStatusEffectsWithTag(player, n"DoT");
+        StatusEffectHelper.RemoveStatusEffectsWithTag(player, n"PreventLowHealthOverlay");
+    }
 
     public static func GetPlayerHealthPercent(player: ref<PlayerPuppet>) -> Float {
         let gi = player.GetGame();
@@ -206,16 +408,61 @@ public abstract class NightSceneDefeatHelper {
         let gi = player.GetGame();
         let poolSys = GameInstance.GetStatPoolsSystem(gi);
 
-        // 1. Restore health to 100% immediately (prevents death race condition)
+        NightSceneDefeatHelper.LogPlayerStatusEffects(player, "PREVENT_DEATH: BEFORE INTERVENTION");
+
+        // 1. Restore health to 100% & apply invulnerability + prevent low health overlay immediately
         poolSys.RequestSettingStatPoolValue(Cast<StatsObjectID>(player.GetEntityID()), gamedataStatPoolType.Health, 100.0, player);
+        StatusEffectHelper.ApplyStatusEffect(player, t"BaseStatusEffect.Invulnerable");
+        StatusEffectHelper.ApplyStatusEffect(player, t"GameplayRestriction.PreventLowHealthOverlay");
+
+        // Strip all obscuring overlays, third-party low health effects, and debuffs
+        NightSceneDefeatHelper.StripStatusEffectAllStacks(player, t"Effectors.LowHealthTBH");
+        NightSceneDefeatHelper.StripStatusEffectAllStacks(player, t"Effectors.CriticalHealthTBH");
+        NightSceneDefeatHelper.StripStatusEffectAllStacks(player, t"BaseStatusEffect.LowHealth");
+        NightSceneDefeatHelper.StripStatusEffectAllStacks(player, t"BaseStatusEffect.CriticallyLowHealth");
+        NightSceneDefeatHelper.StripStatusEffectAllStacks(player, t"BaseStatusEffect.JohnnySickness");
+        NightSceneDefeatHelper.StripStatusEffectAllStacks(player, t"BaseStatusEffect.Dying");
+        NightSceneDefeatHelper.StripStatusEffectAllStacks(player, t"BaseStatusEffect.DamageScreen");
+        NightSceneDefeatHelper.StripStatusEffectAllStacks(player, t"BaseStatusEffect.DamageIndicator");
+        NightSceneDefeatHelper.StripStatusEffectAllStacks(player, t"BaseStatusEffect.NetwatcherGlitch");
+
+        StatusEffectHelper.RemoveStatusEffectsWithTag(player, n"Debuff");
+        StatusEffectHelper.RemoveStatusEffectsWithTag(player, n"LowHealth");
+        StatusEffectHelper.RemoveStatusEffectsWithTag(player, n"Blind");
+        StatusEffectHelper.RemoveStatusEffectsWithTag(player, n"Glitch");
+        StatusEffectHelper.RemoveStatusEffectsWithTag(player, n"DoT");
+
+        // Kill all death, dying, damage, and blackout post-processing screen shaders & loops
+        NightSceneDefeatHelper.KillAllScreenEffects(player);
+
+        // Unset time dilation so world rendering and lighting tick normally
+        GameInstance.GetTimeSystem(gi).UnsetTimeDilation(n"");
+        GameInstance.GetTimeSystem(gi).UnsetTimeDilationOnLocalPlayerZero(n"");
+
+        // Reset PhotoMode health state and Audio tone
+        let photoBB = GameInstance.GetBlackboardSystem(gi).Get(GetAllBlackboardDefs().PhotoMode);
+        if IsDefined(photoBB) {
+            photoBB.SetUint(GetAllBlackboardDefs().PhotoMode.PlayerHealthState, 0u);
+        }
+        let audioSys = GameInstance.GetAudioSystem(gi);
+        if IsDefined(audioSys) {
+            audioSys.NotifyGameTone(n"Default");
+        }
+
+        // Reset player state machine blackboard so it's not trapped in Death/Combat blackout
+        let psmBB = player.GetPlayerStateMachineBlackboard();
+        if IsDefined(psmBB) {
+            psmBB.SetInt(GetAllBlackboardDefs().PlayerStateMachine.HighLevel, EnumInt(gamePSMHighLevel.Default), true);
+            psmBB.SetInt(GetAllBlackboardDefs().PlayerStateMachine.Combat, EnumInt(gamePSMCombat.OutOfCombat), true);
+            psmBB.SetInt(GetAllBlackboardDefs().PlayerStateMachine.Vision, EnumInt(gamePSMVision.Default), true);
+            psmBB.SetInt(GetAllBlackboardDefs().PlayerStateMachine.Vitals, EnumInt(gamePSMVitals.Alive), true);
+            psmBB.SetBool(GetAllBlackboardDefs().PlayerStateMachine.DisplayDeathMenu, false, true);
+        }
 
         // 2. Make player invisible (enemies can't see V)
         player.SetInvisible(true);
 
-        // 3. Block AI detection (optical camo effect)
-        player.PromoteOpticalCamoEffectorToCompletelyBlocking();
-
-        // 4. Remove player from ALL hostile threat lists AND freeze ALL hostiles
+        // 3. Remove player from ALL hostile threat lists AND freeze ALL hostiles
         let trackerComp = player.GetTargetTrackerComponent();
         if IsDefined(trackerComp) {
             let threats = trackerComp.GetHostileThreats(false);
@@ -231,7 +478,7 @@ public abstract class NightSceneDefeatHelper {
                     }
 
                     // Freeze this NPC (stop all movement/combat AI)
-                    StatusEffectHelper.ApplyStatusEffect(hostileEntity, t"BaseStatusEffect.intomovementLockActive");
+                    StatusEffectHelper.ApplyStatusEffect(hostileEntity, t"GameplayRestriction.NoMovement");
 
                     // DON'T change attitude -- keep them hostile so they re-aggro when unfrozen
                     // Just deactivating threat + freeze is enough to stop combat
@@ -241,19 +488,67 @@ public abstract class NightSceneDefeatHelper {
             LogChannel(n"NightScene", "Froze " + IntToString(ArraySize(threats)) + " hostile NPCs");
         }
 
-        // 5. Player movement lock is NOT applied here -- SceneManager.SetupScene()
-        // (called moments later via TriggerDefeatScene -> StartScene) already applies
-        // it through LockPlayerControls. Applying it twice here left the player
-        // permanently locked after the scene ended, since cleanup only removes it once.
+        NightSceneDefeatHelper.LogPlayerStatusEffects(player, "PREVENT_DEATH: AFTER INTERVENTION");
 
         LogChannel(n"NightScene", "Combat stopped: player invisible, HP=100%, all hostiles frozen");
     }
 
-    /// Schedule enemy unfreeze after defeat scene ends.
+    /// Schedule enemy unfreeze after defeat scene ends, OR flatline player if defeatFatalMode is enabled.
     /// Player visibility is handled by RestorePlayerFromScene (called separately).
     public static func RestoreFromDefeat(player: ref<PlayerPuppet>) -> Void {
-        // Schedule enemy unfreeze after grace period
         let config = NightSceneServices.Get().SceneManager().GetConfig();
+        if config.defeatFatalMode {
+            NightSceneServices.Get().SceneManager().SetExecutingFatalDeath(true);
+
+            NightSceneDefeatHelper.LogPlayerStatusEffects(player, "RESTORE_FROM_DEFEAT: FATAL MODE START");
+
+            let gi = player.GetGame();
+
+            // Clear any GodMode or Immortality registrations
+            let godMode = GameInstance.GetGodModeSystem(gi);
+            if IsDefined(godMode) {
+                godMode.ClearGodMode(player.GetEntityID(), n"Default");
+                godMode.ClearGodMode(player.GetEntityID(), n"NightScene");
+                godMode.RemoveGodMode(player.GetEntityID(), gameGodModeType.Invulnerable, n"Default");
+                godMode.RemoveGodMode(player.GetEntityID(), gameGodModeType.Immortal, n"Default");
+            }
+
+            // Strip ALL restrictions, invulnerabilities, and menu blockers completely
+            NightSceneDefeatHelper.RemoveAllGameplayRestrictions(player);
+            player.SetInvisible(false);
+
+            // Set health pool to 0.0
+            let poolSys = GameInstance.GetStatPoolsSystem(gi);
+            poolSys.RequestSettingStatPoolValue(Cast<StatsObjectID>(player.GetEntityID()), gamedataStatPoolType.Health, 0.0, null, true);
+
+            // Trigger fatal kill sequence
+            StatusEffectHelper.ApplyStatusEffect(player, t"BaseStatusEffect.ForceKill");
+            player.Kill(null, false, false);
+            player.QueueEvent(new gameDeathEvent());
+
+            // Reset and trigger PSM DisplayDeathMenu
+            let psmBB = player.GetPlayerStateMachineBlackboard();
+            if IsDefined(psmBB) {
+                psmBB.SetInt(GetAllBlackboardDefs().PlayerStateMachine.Vitals, EnumInt(gamePSMVitals.Dead), true);
+                psmBB.SetBool(GetAllBlackboardDefs().PlayerStateMachine.DisplayDeathMenu, false, true);
+                psmBB.SetBool(GetAllBlackboardDefs().PlayerStateMachine.DisplayDeathMenu, true, true);
+            }
+
+            // Direct UI event dispatch to switch scenario to MenuScenario_DeathMenu
+            let uiSys = GameInstance.GetUISystem(gi);
+            if IsDefined(uiSys) {
+                let menuEvent = new inkMenuInstance_SpawnEvent();
+                menuEvent.Init(n"OnShowDeathMenu");
+                uiSys.QueueEvent(menuEvent);
+            }
+
+            NightSceneDefeatHelper.LogPlayerStatusEffects(player, "RESTORE_FROM_DEFEAT: FATAL MODE AFTER KILL");
+
+            LogChannel(n"NightScene", "Fatal defeat mode active: player killed on scene conclusion");
+            return;
+        }
+
+        // Schedule enemy unfreeze after grace period
         let gracePeriod = config.defeatGracePeriod;
         if gracePeriod <= 0.0 {
             gracePeriod = 0.1; // minimum delay

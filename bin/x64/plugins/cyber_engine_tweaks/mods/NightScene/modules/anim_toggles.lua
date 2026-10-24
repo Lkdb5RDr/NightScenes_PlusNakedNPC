@@ -9,7 +9,11 @@
 
 local AnimToggles = {}
 
-AnimToggles.filePath = "plugins/cyber_engine_tweaks/mods/NightScene/anim_toggles.json"
+-- CET's working directory for a mod is the mod's own folder, so a bare
+-- filename lands in mods/NightScene/. The old nested path relied on
+-- directories that io.open cannot create -- see config.lua for the full story.
+AnimToggles.filePath = "anim_toggles.json"
+AnimToggles.legacyFilePath = "plugins/cyber_engine_tweaks/mods/NightScene/anim_toggles.json"
 
 -- Set of disabled animation IDs: animId -> true
 AnimToggles.disabled = {}
@@ -18,6 +22,11 @@ AnimToggles.disabled = {}
 --- call ApplyToRedscript once animations are registered).
 function AnimToggles.Load()
     local file = io.open(AnimToggles.filePath, "r")
+    local migrated = false
+    if not file then
+        file = io.open(AnimToggles.legacyFilePath, "r")
+        migrated = (file ~= nil)
+    end
     if not file then
         AnimToggles.disabled = {}
         print("[NightScene] No anim_toggles.json found, all animations enabled by default")
@@ -35,6 +44,10 @@ function AnimToggles.Load()
         end
         AnimToggles.disabled = disabled
         print("[NightScene] Loaded animation toggles: " .. tostring(#data) .. " disabled")
+        if migrated then
+            print("[NightScene] Animation toggles migrated from the old nested path")
+            AnimToggles.Save()
+        end
     else
         print("[NightScene] WARN: anim_toggles.json corrupted, all animations enabled")
         AnimToggles.disabled = {}
