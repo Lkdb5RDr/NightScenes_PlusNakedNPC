@@ -28,7 +28,7 @@ public abstract class NightSceneAPI {
             return false;
         }
 
-        let zeroPos = new Vector4(0.0, 0.0, 0.0, 0.0);
+        let zeroPos = Vector4(0.0, 0.0, 0.0, 0.0);
         return NightSceneServices.Get().SceneManager().StartScene(animDef, actors, NightSceneTriggerSource.API, zeroPos);
     }
 
@@ -56,7 +56,7 @@ public abstract class NightSceneAPI {
             return false;
         }
 
-        let zeroPos = new Vector4(0.0, 0.0, 0.0, 0.0);
+        let zeroPos = Vector4(0.0, 0.0, 0.0, 0.0);
         return NightSceneServices.Get().SceneManager().StartScene(animDef, actors, NightSceneTriggerSource.API, zeroPos);
     }
 
@@ -505,7 +505,7 @@ public abstract class NightSceneAPI {
             femAnim.animName = StringToName(animFemale);
             femAnim.role = NightSceneActorRole.Subject;
             femAnim.duration = 30.0;
-            femAnim.positionOffset = new Vector4(0.0, 0.0, 0.0, 0.0);
+            femAnim.positionOffset = Vector4(0.0, 0.0, 0.0, 0.0);
             femAnim.rotationOffset = new EulerAngles();
             ArrayPush(stage.actorAnims, femAnim);
         }
@@ -518,7 +518,7 @@ public abstract class NightSceneAPI {
                 maleAnim.role = NightSceneActorRole.Subject;
             }
             maleAnim.duration = 30.0;
-            maleAnim.positionOffset = new Vector4(0.0, 0.0, 0.0, 0.0);
+            maleAnim.positionOffset = Vector4(0.0, 0.0, 0.0, 0.0);
             maleAnim.rotationOffset = new EulerAngles();
             ArrayPush(stage.actorAnims, maleAnim);
         }

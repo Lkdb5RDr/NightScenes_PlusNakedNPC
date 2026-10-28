@@ -84,7 +84,7 @@ local sceneTick = 0
 --- Called when CET initializes the mod.
 registerForEvent("onInit", function()
     print("[NightScene] ========================================")
-    print("[NightScene]  NightScene Framework v0.1.0 (CET)")
+    print("[NightScene]  NightScene Framework v0.1.0.1 (CET)")
     print("[NightScene] ========================================")
 
     -- Load configuration
@@ -163,7 +163,7 @@ registerForEvent("onUpdate", function(deltaTime)
     isInGame = true
 
     -- Poll for workspot entity spawn
-    pcall(Spawner.OnUpdate)
+    if Spawner then pcall(Spawner.OnUpdate) end	-- To avoid filling the log if the mod crashes
 
     -- Check for a pending workspot spawn. Set by EVERY scene start (defeat,
     -- NPC defeat, and normal hotkey interaction).

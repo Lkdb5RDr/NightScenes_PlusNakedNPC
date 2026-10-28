@@ -22,7 +22,6 @@ public abstract class NightSceneNPCFinder {
     /// Uses a tight frontal cone search (narrower than FindNearestNPCInFront)
     /// to approximate crosshair targeting.
     public static func FindLookAtNPC(player: ref<PlayerPuppet>) -> ref<ScriptedPuppet> {
-        let gi = player.GetGame();
         let playerPos = player.GetWorldPosition();
         let playerForward = player.GetWorldForward();
 
@@ -37,7 +36,7 @@ public abstract class NightSceneNPCFinder {
             let npc = nearbyNPCs[i];
             let npcPos = npc.GetWorldPosition();
 
-            let toNPC = new Vector4(
+            let toNPC = Vector4(
                 npcPos.X - playerPos.X,
                 npcPos.Y - playerPos.Y,
                 npcPos.Z - playerPos.Z,
@@ -46,7 +45,7 @@ public abstract class NightSceneNPCFinder {
 
             let distance = Vector4.Length(toNPC);
             if distance > 0.01 {
-                let toNPCNorm = new Vector4(
+                let toNPCNorm = Vector4(
                     toNPC.X / distance,
                     toNPC.Y / distance,
                     toNPC.Z / distance,
@@ -75,7 +74,6 @@ public abstract class NightSceneNPCFinder {
 
     /// Find the nearest NPC in front of the player (within a cone).
     public static func FindNearestNPCInFront(player: ref<PlayerPuppet>, maxDistance: Float) -> ref<ScriptedPuppet> {
-        let gi = player.GetGame();
         let playerPos = player.GetWorldPosition();
         let playerForward = player.GetWorldForward();
 
@@ -91,7 +89,7 @@ public abstract class NightSceneNPCFinder {
             let npcPos = npc.GetWorldPosition();
 
             // Direction from player to NPC
-            let toNPC = new Vector4(
+            let toNPC = Vector4(
                 npcPos.X - playerPos.X,
                 npcPos.Y - playerPos.Y,
                 npcPos.Z - playerPos.Z,
@@ -101,7 +99,7 @@ public abstract class NightSceneNPCFinder {
             let distance = Vector4.Length(toNPC);
             if distance > 0.01 {
                 // Normalize
-                let toNPCNorm = new Vector4(
+                let toNPCNorm = Vector4(
                     toNPC.X / distance,
                     toNPC.Y / distance,
                     toNPC.Z / distance,
@@ -389,7 +387,7 @@ public class NightSceneInteractionHandler extends IScriptable {
         // Use the midpoint between player and NPC as scene position
         let playerPos = player.GetWorldPosition();
         let npcPos = npc.GetWorldPosition();
-        let scenePos = new Vector4(
+        let scenePos = Vector4(
             (playerPos.X + npcPos.X) / 2.0,
             (playerPos.Y + npcPos.Y) / 2.0,
             (playerPos.Z + npcPos.Z) / 2.0,
