@@ -139,6 +139,15 @@ function WorkspotSpawner.OnUpdate()
         if elapsed >= 0.1 and not WorkspotSpawner.preStripped then
             WorkspotSpawner.preStripped = true
             local nakedMod = GetMod("NakedNPC")
+            if nakedMod then
+				if nakedMod.EnableIfNeeded() then
+					print("[NightScene] Spawner: NakedNPC enabled.")
+				else
+					print("[NightScene] Spawner: NakedNPC did not need to be enabled.")
+				end
+			else
+				print("[NightScene] Spawner: NakedNPC not found.")
+			end
             if nakedMod and nakedMod.StripForScene then
                 print("[NightScene] Spawner: Pre-stripping NPCs before PlayAll...")
                 for i = 0, WorkspotSpawner.actorCount - 1 do
@@ -793,6 +802,11 @@ function WorkspotSpawner.Cleanup()
     -- keeping them would let a stale mask be restored onto the NEXT clone.
     cloneHeadSavedChunkMasks = {}
 
+	if NakedNPC.DisableIfNeeded() then
+		print("[NightScene] Spawner: NakedMod disabled.")
+	else
+		print("[NightScene] Spawner: NakedNPC did not need to be disabled.")
+	end
 
     print("[NightScene] Spawner: Cleaned up (player restore pending)")
 end
