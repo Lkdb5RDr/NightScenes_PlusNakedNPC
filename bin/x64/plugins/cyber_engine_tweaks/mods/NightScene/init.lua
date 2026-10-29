@@ -66,8 +66,8 @@ end
 
 -- Mod version. Single source of truth: the UI is handed this rather than
 -- carrying its own copy, which is how the startup banner and the settings
--- window both drifted to a stale "0.1.0" while the mod shipped as 2.9.
-local modVersion = "3.0"
+-- window both drifted to a stale "0.1.0".
+local modVersion = "0.2.9"
 
 -- Module-level state
 local isInitialized = false
