@@ -19,7 +19,7 @@
 -- Mesh swaps ONLY work during OnRequestComponents (component loading phase).
 -- This two-step cycle is the same pattern CET NPC Body Tweaks and AMM use.
 
-local modVersion = "0.4.1"
+local modVersion = "3.0"
 local modName = "NakedNPC"
 
 local Config = require("modules/config")

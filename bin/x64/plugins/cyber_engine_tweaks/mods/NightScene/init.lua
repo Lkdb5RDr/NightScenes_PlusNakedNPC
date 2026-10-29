@@ -64,6 +64,11 @@ if not okCam then
     }
 end
 
+-- Mod version. Single source of truth: the UI is handed this rather than
+-- carrying its own copy, which is how the startup banner and the settings
+-- window both drifted to a stale "0.1.0" while the mod shipped as 2.9.
+local modVersion = "3.0"
+
 -- Module-level state
 local isInitialized = false
 local isInGame = false
@@ -84,7 +89,7 @@ local sceneTick = 0
 --- Called when CET initializes the mod.
 registerForEvent("onInit", function()
     print("[NightScene] ========================================")
-    print("[NightScene]  NightScene Framework v0.1.0 (CET)")
+    print("[NightScene]  NightScene Framework v" .. modVersion .. " (CET)")
     print("[NightScene] ========================================")
 
     -- Load configuration
@@ -92,7 +97,7 @@ registerForEvent("onInit", function()
     AnimToggles.Load()
 
     -- Initialize UI with config + anim toggle references
-    UI.Init(Config, AnimToggles)
+    UI.Init(Config, AnimToggles, modVersion)
 
     -- Mouse look for the scene camera. Only consumed while the camera is
     -- active, so normal play is unaffected.

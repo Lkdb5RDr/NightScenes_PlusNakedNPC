@@ -56,9 +56,10 @@ UI.hotkeySlots = {
 }
 
 --- Initialize the UI module.
-function UI.Init(configModule, animTogglesModule)
+function UI.Init(configModule, animTogglesModule, version)
     UI.config = configModule
     UI.animToggles = animTogglesModule
+    UI.modVersion = version or "?"
     print("[NightScene] UI module initialized")
 end
 
@@ -285,7 +286,7 @@ function UI.DrawConfigMenu()
 
     -- Info
     ImGui.Separator()
-    ImGui.TextColored(0.5, 0.5, 0.5, 1.0, "NightScene Framework v0.1.0")
+    ImGui.TextColored(0.5, 0.5, 0.5, 1.0, "NightScene Framework v" .. tostring(UI.modVersion))
 
     -- Show animation count
     local animCount = 0

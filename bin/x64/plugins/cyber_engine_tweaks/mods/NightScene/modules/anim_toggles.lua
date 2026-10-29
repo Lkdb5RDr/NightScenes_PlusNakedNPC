@@ -61,7 +61,20 @@ function AnimToggles.Save()
         table.insert(list, id)
     end
 
-    local content = json.encode(list)
+    -- Written by hand rather than json.encode: that puts all hundred-odd ids
+    -- on a single line, which is unreadable and undiffable if you ever want to
+    -- edit the file directly. Sorted so entries stay put between saves.
+    table.sort(list)
+
+    local parts = {}
+    for i, id in ipairs(list) do
+        parts[i] = '  "' .. id .. '"'
+    end
+    local content = "[\n" .. table.concat(parts, ",\n") .. "\n]\n"
+
+    -- An empty set still has to be valid JSON.
+    if #parts == 0 then content = "[]\n" end
+
     local file = io.open(AnimToggles.filePath, "w")
     if file then
         file:write(content)
