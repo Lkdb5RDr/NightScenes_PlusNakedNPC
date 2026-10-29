@@ -353,12 +353,29 @@ public abstract class NightSceneDefeatHelper {
     }
 
     /// Strips all stacks of a specific status effect from the player.
+    /// Remove a status effect, trying every removal form.
+    ///
+    /// The game can accept the plain two-argument RemoveStatusEffect without
+    /// actually removing an INSTIGATOR-OWNED effect -- it reports success and
+    /// the effect stays on. That is why a defeat scene could leave V stuck
+    /// invulnerable or unable to move even though the mod "removed" it. So all
+    /// three forms are tried, and the result is verified rather than assumed.
+    ///
+    /// Anything that survives is logged, so a stuck player leaves evidence
+    /// instead of a silent failure.
     public static func StripStatusEffectAllStacks(player: ref<PlayerPuppet>, id: TweakDBID) -> Void {
         if !IsDefined(player) { return; }
         let ses = GameInstance.GetStatusEffectSystem(player.GetGame());
         if !IsDefined(ses) { return; }
-        ses.RemoveStatusEffect(player.GetEntityID(), id, 99u);
+
+        let eid = player.GetEntityID();
+        ses.RemoveStatusEffect(eid, id);
+        ses.RemoveStatusEffect(eid, id, 99u);
         StatusEffectHelper.RemoveStatusEffect(player, id);
+
+        if ses.HasStatusEffect(eid, id) {
+            LogChannel(n"NightScene", "Status effect survived removal: " + TDBID.ToStringDEBUG(id));
+        }
     }
 
     /// Completely strips all movement/combat locks, menu blockers, low-health glitch overlays, and invulnerability.
@@ -547,6 +564,15 @@ public abstract class NightSceneDefeatHelper {
             LogChannel(n"NightScene", "Fatal defeat mode active: player killed on scene conclusion");
             return;
         }
+
+        // Undo everything PreventDeath applied. This is NOT optional: it
+        // applies BaseStatusEffect.Invulnerable to stop V dying mid-scene, and
+        // until this call existed only the fatal-mode branch below removed it.
+        // Every ordinary defeat scene therefore left V permanently invulnerable
+        // with no way back short of reloading a save -- the single most
+        // reported bug in the defeat system.
+        NightSceneDefeatHelper.RemoveAllGameplayRestrictions(player);
+        NightSceneDefeatHelper.LogPlayerStatusEffects(player, "RESTORE_FROM_DEFEAT: AFTER CLEANUP");
 
         // Schedule enemy unfreeze after grace period
         let gracePeriod = config.defeatGracePeriod;

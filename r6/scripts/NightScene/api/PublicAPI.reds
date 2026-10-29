@@ -633,6 +633,38 @@ public abstract class NightSceneAPI {
         NightSceneServices.Get().SceneManager().GetConfig().defeatGracePeriod = value;
     }
 
+    /// Recovery path for a player left stuck after a scene -- invulnerable,
+    /// unable to move, phone blocked. Unlike the normal cleanup this does not
+    /// depend on the mod's own bookkeeping: it force-removes every restriction
+    /// and invulnerability the defeat system can apply, whether or not the mod
+    /// thinks it applied them, stops any active scene, and restores the player.
+    ///
+    /// Reachable from the CET console as:
+    ///     GetMod("NightScene").EmergencyUnlock()
+    public static func EmergencyUnlock() -> Void {
+        let gi = GetGameInstance();
+        let player = GetPlayer(gi) as PlayerPuppet;
+        if !IsDefined(player) { return; }
+
+        let mgr = NightSceneServices.Get().SceneManager();
+        if mgr.IsSceneActive() {
+            mgr.CancelScene();
+        }
+
+        // Never leave the fatal-death flag set -- it suppresses the death
+        // pipeline, so a stale true would make V unkillable afterwards.
+        mgr.SetExecutingFatalDeath(false);
+
+        NightSceneDefeatHelper.RemoveAllGameplayRestrictions(player);
+        NightSceneDefeatHelper.KillAllScreenEffects(player);
+
+        player.SetInvisible(false);
+        StatusEffectHelper.RemoveStatusEffect(player, t"BaseStatusEffect.intomovementLockActive");
+
+        NightSceneDefeatHelper.LogPlayerStatusEffects(player, "EMERGENCY_UNLOCK: AFTER");
+        LogChannel(n"NightScene", "EmergencyUnlock: all restrictions and invulnerability cleared");
+    }
+
     /// When true, a defeat scene ends with V actually flatlining.
     public static func SetDefeatFatalMode(value: Bool) -> Void {
         NightSceneServices.Get().SceneManager().GetConfig().defeatFatalMode = value;

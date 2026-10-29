@@ -505,6 +505,22 @@ return {
     ---     GetMod("NightScene").DebugExplicitMatch()
     DebugExplicitMatch = function() return ExplicitMatcher.DebugLookAt() end,
 
+    --- Recover from a scene that left V stuck -- invulnerable, unable to move,
+    --- phone or combat blocked. Clears every restriction the defeat system can
+    --- apply, stops any active scene, and makes V visible again.
+    ---     GetMod("NightScene").EmergencyUnlock()
+    EmergencyUnlock = function()
+        local ok, err = pcall(Game['NightSceneAPI::EmergencyUnlock;'])
+        if ok then
+            print("[NightScene] EmergencyUnlock: restrictions and invulnerability cleared")
+        else
+            print("[NightScene] EmergencyUnlock failed: " .. tostring(err))
+        end
+        -- The visual side lives in Lua, so undo it here too.
+        pcall(Spawner.ShowPlayer)
+        pcall(Spawner.Cleanup)
+    end,
+
     --- Hide or restore the real V. Mostly an escape hatch: if a scene ever
     --- ends badly and leaves V invisible, DebugShowV() puts them back.
     ---     GetMod("NightScene").DebugHideV()
