@@ -110,7 +110,8 @@ function Config.Save()
         file:close()
         print("[NightScene] Configuration saved")
     else
-        print("[NightScene] ERROR: Could not save config file")
+        print("[NightScene] ERROR: Could not save config file, with error:")
+		print(io.open(Config.filePath, "w"))
     end
 
     -- Push updated config to Redscript framework

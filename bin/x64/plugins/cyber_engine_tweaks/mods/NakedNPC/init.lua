@@ -34,6 +34,11 @@ local drawWindow = false
 local system = nil
 local cleanupTimer = 0.0
 
+-- Attempt to workaround the issue with Lizzie's Braindance and Hotscene not striping NPC (and probably all mod relying on the game to strip NPC).
+-- Memorize wether or not the mod was enabled before calling its functionality (see EnableIfNeeded below)
+-- To activate, set Enabled to false in Config.json
+local changedEnabled = false
+
 -- Pending naked table: entities going through the two-step strip cycle
 -- Key = entityID hash string (ULL stripped)
 -- Value = { entityRef, originalAppearance, step, timestamp }
@@ -327,6 +332,29 @@ end
 
 function NakedNPC.GetVersion() return modVersion end
 function NakedNPC.IsReady() return initialized and Config.Get("enabled") end
+function NakedNPC.IsEnabled() return Config.Get("enabled") end
+function NakedNPC.Enable() return Config.Set("enabled", true) end
+function NakedNPC.Disable() return Config.Set("enabled", false) end
+
+function NakedNPC.EnableIfNeeded()
+    if not NakedNPC.IsEnabled() and not changedEnabled then
+        NakedNPC.Enable()
+        changedEnabled = true
+        return true
+    end 
+    return false
+end
+
+function NakedNPC.DisableIfNeeded()
+    if NakedNPC.IsEnabled() and changedEnabled then
+        NakedNPC.Disable()
+        changedEnabled = false
+        return true
+    end 
+    return false
+end
+
+function NakedNPC.debugMode() return Config.Get("debugMode") end
 
 -- -------------------------------------------------------
 --  LIFECYCLE
@@ -343,6 +371,11 @@ registerForEvent("onInit", function()
 
     initialized = true
     print("[NakedNPC] CET module initialized")
+    if Config.Get("enabled") then
+        print("[NakedNPC] enabled")
+    else
+        print("[NakedNPC] disabled")
+    end
 
     -- Sync config when game loads
     Observe("PlayerPuppet", "OnGameAttached", function(self)

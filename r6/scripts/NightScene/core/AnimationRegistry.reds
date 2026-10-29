@@ -371,7 +371,7 @@ public class NightSceneStageBuilder extends IScriptable {
         anim.animResource = animResource;
         anim.role = role;
         anim.duration = duration;
-        anim.positionOffset = new Vector4(0.0, 0.0, 0.0, 0.0);
+        anim.positionOffset = Vector4(0.0, 0.0, 0.0, 0.0);
         anim.rotationOffset = new EulerAngles();
         ArrayPush(this.m_stage.actorAnims, anim);
         return this;

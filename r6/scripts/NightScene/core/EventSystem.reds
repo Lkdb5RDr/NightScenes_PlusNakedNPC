@@ -38,7 +38,7 @@ public class NightSceneEventBus extends IScriptable {
     }
 
     /// Unsubscribe a specific callback from a specific event.
-    public func Unsubscribe(eventName: CName, callback: ref<NightSceneCallback>) -> Void {
+    public func Unsubscribe(eventName: CName, callback: wref<NightSceneCallback>) -> Void {
         let i: Int32 = ArraySize(this.m_subscriptions) - 1;
         while i >= 0 {
             let sub = this.m_subscriptions[i];
@@ -53,7 +53,7 @@ public class NightSceneEventBus extends IScriptable {
     }
 
     /// Unsubscribe all callbacks for a given listener object.
-    public func UnsubscribeAll(callback: ref<NightSceneCallback>) -> Void {
+    public func UnsubscribeAll(callback: wref<NightSceneCallback>) -> Void {
         let i: Int32 = ArraySize(this.m_subscriptions) - 1;
         while i >= 0 {
             if Equals(this.m_subscriptions[i].callback, callback) {

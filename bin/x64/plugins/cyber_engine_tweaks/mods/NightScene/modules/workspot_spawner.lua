@@ -139,6 +139,13 @@ function WorkspotSpawner.OnUpdate()
         if elapsed >= 0.1 and not WorkspotSpawner.preStripped then
             WorkspotSpawner.preStripped = true
             local nakedMod = GetMod("NakedNPC")
+            -- Some mods (Lizzie's, Hotscenes) only strip NPCs correctly while
+            -- NakedNPC is switched OFF, so users turn it off and then our own
+            -- scenes lose stripping. Turn it on just for the scene and put it
+            -- back in Cleanup. Guarded: older NakedNPC builds lack these.
+            if nakedMod and nakedMod.EnableIfNeeded and nakedMod.EnableIfNeeded() then
+                print("[NightScene] Spawner: NakedNPC enabled for this scene")
+            end
             if nakedMod and nakedMod.StripForScene then
                 print("[NightScene] Spawner: Pre-stripping NPCs before PlayAll...")
                 for i = 0, WorkspotSpawner.actorCount - 1 do
@@ -793,6 +800,12 @@ function WorkspotSpawner.Cleanup()
     -- keeping them would let a stale mask be restored onto the NEXT clone.
     cloneHeadSavedChunkMasks = {}
 
+    -- Put NakedNPC's enabled flag back if the scene turned it on. Only logs
+    -- when something actually changed -- "did not need to be disabled" fires
+    -- on every scene for everyone who leaves NakedNPC on, which is most people.
+    if nakedMod and nakedMod.DisableIfNeeded and nakedMod.DisableIfNeeded() then
+        print("[NightScene] Spawner: NakedNPC re-disabled")
+    end
 
     print("[NightScene] Spawner: Cleaned up (player restore pending)")
 end

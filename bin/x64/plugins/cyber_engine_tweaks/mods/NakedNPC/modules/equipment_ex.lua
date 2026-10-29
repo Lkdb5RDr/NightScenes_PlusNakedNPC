@@ -35,6 +35,12 @@ EquipmentEx.hasBackup = false
 -- case-insensitively, so an outfit saved as "NUDE" or "Nude" is found too.
 EquipmentEx.outfitNames = { "naked", "nude" }
 
+-- used by negociable affection
+EquipmentEx.outfitJoyToy = "JOYTOY"
+EquipmentEx.outfitWorkGear = "WORKGEAR"
+-- added to choose a specific naked outfit based on what you are wearing at the moment
+EquipmentEx.outfitNakedPrefix = "NAKED"
+
 -- One-time hint so a user who hasn't made the outfit yet finds out why V is
 -- still dressed, without spamming it on every scene.
 EquipmentEx.hintShown = false
@@ -64,7 +70,24 @@ local COMMANDS = {
     LoadOutfit   = { argType = "CName" },
     DeleteOutfit = { argType = "CName" },
     SaveOutfit   = { argType = "String" },
+    IsEquipped   = { argType = "CName" },
 }
+
+-- PInfo print to console and mod.log
+local function PInfo(aString)
+    print(aString)
+    spdlog.info(aString)
+end
+
+-- PVerbose print to mod.log
+local function PVerbose(aString)
+    spdlog.info(aString)
+end
+
+-- PTrace print to mod.log
+local function PTrace(aString)
+    if NakedNPC.debugMode() then spdlog.trace(aString) end;
+end
 
 --- CET may or may not need the GameInstance passed explicitly.
 local function gameInstance()
@@ -136,7 +159,7 @@ function EquipmentEx.Call(funcName, arg)
         if ok then
             if EquipmentEx.callForm ~= i then
                 EquipmentEx.callForm = i
-                print("[NakedNPC] Equipment-EX: using call form " .. i .. " for " .. funcName)
+                PInfo("[NakedNPC] Equipment-EX: using call form " .. i .. " for " .. funcName)
             end
             return true
         end
@@ -172,7 +195,7 @@ function EquipmentEx.IsAvailable()
     -- dump the player's entire saved-outfit list to the console every session.
     if getOutfitSystem() ~= nil then
         EquipmentEx.available = true
-        print("[NakedNPC] Equipment-EX detected")
+        PInfo("[NakedNPC] Equipment-EX detected")
         return true
     end
 
@@ -181,7 +204,7 @@ function EquipmentEx.IsAvailable()
     EquipmentEx.available = EquipmentEx.Call("Version")
 
     if not EquipmentEx.available then
-        print("[NakedNPC] Equipment-EX not detected, using vanilla unequip path")
+        PInfo("[NakedNPC] Equipment-EX not detected, using vanilla unequip path")
     end
     return EquipmentEx.available
 end
@@ -213,6 +236,91 @@ function EquipmentEx.FindOutfitName()
     return nil
 end
 
+-- Find an outfit by name
+function EquipmentEx.FindAnOutfit(wanted)
+    PTrace("[NakedNPC] Equipment-EX: Checking '" .. tostring(wanted) .. "'")
+    local sys = getOutfitSystem()
+    if not sys then return nil end
+
+    local ok, outfits = pcall(function() return sys:GetOutfits() end)
+    if not ok or not outfits then return nil end
+
+    for _, entry in ipairs(outfits) do
+        local okName, asString = pcall(function() return Game.NameToString(entry) end)
+        -- PTrace("[NakedNPC] Equipment-EX: testing outfit '" .. tostring(asString) .. "'")
+        if okName and asString and asString:lower() == wanted:lower() then
+            return entry, asString
+        end
+    end
+    return nil
+end
+
+--- Find the current outfit name
+function EquipmentEx.FindCurrentOutfit()
+    local sys = getOutfitSystem()
+    if not sys then return nil end
+
+    local ok, outfits = pcall(function() return sys:GetOutfits() end)
+    if not ok or not outfits then return nil end
+
+    for _, entry in ipairs(outfits) do
+        if entry then
+            local okName, asString = pcall(function() return Game.NameToString(entry) end)
+            local okActive, isEquipped = pcall(function() return sys:IsEquipped(entry) end)
+            -- PTrace("[NakedNPC] Equipment-EX: testing outfit '" .. tostring(asString) .. "'")
+            if okName and okActive and isEquipped then
+                return entry, asString
+            end
+        end
+    end
+    return nil
+end
+
+-- Find if an outfit name is prefixed by prefix
+function EquipmentEx.OutfitStartsWith(outfit, prefix)
+    PTrace("[NakedNPC] Equipment-EX: Checking '" .. tostring(outfit) .. "' with  '" .. tostring(prefix) .. "' ? ")
+    if not outfit or not prefix then return false end
+    local prefixLen = #prefix
+    local outfitLen = #outfit
+    PTrace("[NakedNPC] Equipment-EX: Lengths " .. tostring(prefixLen) .. "/" .. tostring(outfitLen) .. ".")
+    if prefixLen < outfitLen then
+        PTrace("[NakedNPC] Equipment-EX: Does '" .. outfit .. "' start with  '" .. prefix .. "' ?")
+        if string.lower(string.sub(outfit, 1, prefixLen)) == string.lower(prefix) then
+            PTrace("[NakedNPC] Equipment-EX: '" .. outfit .. "' starts with  '" .. prefix .. "'.")
+            return true
+        end
+    end
+    return false
+end
+
+-- Find the last part of an outfit name that starts at aLen+1
+function EquipmentEx.OutfitSuffix(outfit, aLen)
+    PTrace("[NakedNPC] Equipment-EX: Checking '" .. tostring(outfit) .. "' with  '" .. tostring(aLen) .. "' ? ")
+    if not outfit or not aLen then return "" end
+    local outfitLen = string.len(outfit)
+    PTrace("[NakedNPC] Equipment-EX: Lengths " .. tostring(aLen) .. "/" .. tostring(outfitLen) .. ".")
+    if aLen < outfitLen then
+        local aString = string.sub(outfit, aLen + 1, outfitLen)
+        -- PTrace("[NakedNPC] Equipment-EX: Suffix is '" .. tostring(aString) .. "'.")
+        return aString
+    end
+    return "" -- works for when the outfit is named exactly JOYTOY, not JOYTOYsomething
+end
+
+-- Check if the outfit name starts with JOYTOY
+function EquipmentEx.JoyToyOutfit(outfit)
+    PTrace("[NakedNPC] Equipment-EX: '" .. tostring(outfit) .. " : " .. tostring(EquipmentEx.outfitJoyToy) .. "' ? ")
+    if not outfit then return false end
+    return EquipmentEx.OutfitStartsWith(outfit, EquipmentEx.outfitJoyToy)
+end
+
+-- Check if the outfit name starts with WORKGEAR
+function EquipmentEx.WorkGearOutfit(outfit)
+    PTrace("[NakedNPC] Equipment-EX: '" .. tostring(outfit) .. " : " .. tostring(EquipmentEx.outfitWorkGear) .. "' ? ")
+    if not outfit then return false end
+    return EquipmentEx.OutfitStartsWith(outfit, EquipmentEx.outfitWorkGear)
+end
+
 -- ------------------------------------------------------------
 --  STRIP / RESTORE (player only)
 -- ------------------------------------------------------------
@@ -231,21 +339,75 @@ function EquipmentEx.StripPlayer()
     EquipmentEx.Call("DeleteOutfit", EquipmentEx.backupOutfit)
     EquipmentEx.hasBackup = EquipmentEx.Call("SaveOutfit", EquipmentEx.backupOutfit)
 
+    local sys = getOutfitSystem()
+
+    -- What are we wearing right now ?
+    local currentOutfitC, currentOutfit = EquipmentEx.FindCurrentOutfit()
+    if currentOutfitC and currentOutfit and not (currentOutfit:lower() == EquipmentEx.backupOutfit:lower()) then
+        PVerbose("[NakedNPC] Equipment-EX: current outfit '" .. currentOutfit .. "'")
+        -- Are we wearing a WorkGear outfit ? If yes keep it...
+        if EquipmentEx.WorkGearOutfit(currentOutfit) then
+            PInfo("[NakedNPC] Equipment-EX: kept outfit '" .. currentOutfit .. "'")
+            return true
+        end
+
+        -- Are we wearing a JoyToy outfit ? If yes switch to the corresponding work gear...
+        if EquipmentEx.JoyToyOutfit(currentOutfit) then
+            local suffix = EquipmentEx.OutfitSuffix(currentOutfit, string.len(EquipmentEx.outfitJoyToy)) -- suffix can be empty
+            local workGear = EquipmentEx.outfitWorkGear .. suffix
+            local workGearC, aString = EquipmentEx.FindAnOutfit(workGear)
+            if workGearC and aString then
+                local ok, loaded = pcall(function() return sys:LoadOutfit(workGearC) end)
+                if ok and loaded then
+                    PInfo("[NakedNPC] Equipment-EX: loaded outfit '" .. workGear .. "'")
+                    return true
+                end
+                PInfo("[NakedNPC] Equipment-EX: LoadOutfit('" .. workGear .. "') failed")
+            else -- we use the JoyToy outfit as a WorkGear outfit
+                PInfo("[NakedNPC] Equipment-EX: kept outfit '" .. currentOutfit .. "'")
+                return true
+            end
+        end
+
+        -- Are we wearing a Naked or Nude outfit ? If yes keep it...
+        for _, wanted in ipairs(EquipmentEx.outfitNames) do 
+            if currentOutfit:lower() == wanted:lower() then
+                PInfo("[NakedNPC] Equipment-EX: kept outfit '" .. currentOutfit .. "'")
+                return true
+            end
+        end
+
+        -- is there an outfit named NakedCurrentOutfit ? If yes switch to that
+        local wanted = EquipmentEx.outfitNakedPrefix .. currentOutfit
+        -- PTrace("[NakedNPC] Equipment-EX: wanted outfit '" .. wanted .. "'")
+        local wantedC, aString = EquipmentEx.FindAnOutfit(wanted)
+        -- PTrace("[NakedNPC] Equipment-EX: found outfit '" .. tostring(aString) .. "'")
+        if wantedC and aString then
+            local ok, loaded = pcall(function() return sys:LoadOutfit(wantedC) end)
+            if ok and loaded then
+                PInfo("[NakedNPC] Equipment-EX: loaded outfit '" .. wanted .. "'")
+                return true
+            end
+            PInfo("[NakedNPC] Equipment-EX: LoadOutfit('" .. wanted .. "') failed")
+        end
+    else
+        PVerbose("[NakedNPC] Equipment-EX: no current outfit")
+    end
+
     -- Preferred path: resolve the real saved-outfit name (case-insensitively)
     -- and load it through OutfitSystem, which reports actual success.
-    local sys = getOutfitSystem()
     local cname, displayName = EquipmentEx.FindOutfitName()
 
     if sys and cname then
         local ok, loaded = pcall(function() return sys:LoadOutfit(cname) end)
         if ok and loaded then
-            print("[NakedNPC] Equipment-EX: loaded outfit '" .. displayName .. "'")
+            PInfo("[NakedNPC] Equipment-EX: loaded outfit '" .. displayName .. "'")
             return true
         end
-        print("[NakedNPC] Equipment-EX: LoadOutfit('" .. displayName .. "') failed")
+        PInfo("[NakedNPC] Equipment-EX: LoadOutfit('" .. displayName .. "') failed")
     elseif sys then
         -- We could read the outfit list and none of our names were in it.
-        print("[NakedNPC] Equipment-EX: no saved outfit named "
+        PInfo("[NakedNPC] Equipment-EX: no saved outfit named "
             .. table.concat(EquipmentEx.outfitNames, " or ")
             .. " -- create one in Equipment-EX (it's required).")
         return false
@@ -262,7 +424,7 @@ function EquipmentEx.StripPlayer()
 
     if called and not EquipmentEx.hintShown then
         EquipmentEx.hintShown = true
-        print("[NakedNPC] Equipment-EX: requested outfit via facade (unverified). "
+        PInfo("[NakedNPC] Equipment-EX: requested outfit via facade (unverified). "
             .. "If V is still clothed, check the outfit name.")
     end
     return called
@@ -282,7 +444,7 @@ function EquipmentEx.RestorePlayer()
     EquipmentEx.hasBackup = false
 
     if ok then
-        print("[NakedNPC] Equipment-EX: restored player outfit")
+        PInfo("[NakedNPC] Equipment-EX: restored player outfit")
     end
     return ok
 end

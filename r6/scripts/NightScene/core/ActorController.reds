@@ -161,7 +161,6 @@ public class NightSceneActorController extends IScriptable {
 
         // Approach 1: Apply a custom "frozen" status effect via StatusEffectHelper
         // This is the safest approach as it uses the game's own systems.
-        let gi = actorState.entity.GetGame();
         StatusEffectHelper.ApplyStatusEffect(actorState.entity, t"BaseStatusEffect.intomovementLockActive");
 
         actorState.aiWasDisabled = true;
@@ -179,7 +178,6 @@ public class NightSceneActorController extends IScriptable {
             return;
         }
 
-        let gi = actorState.entity.GetGame();
         StatusEffectHelper.RemoveStatusEffect(actorState.entity, t"BaseStatusEffect.intomovementLockActive");
 
         actorState.aiWasDisabled = false;
@@ -241,7 +239,7 @@ public class NightSceneActorController extends IScriptable {
             rotatedOffset = Quaternion.Transform(sceneOri, offset);
         }
 
-        let finalPos = new Vector4(
+        let finalPos = Vector4(
             scenePos.X + rotatedOffset.X,
             scenePos.Y + rotatedOffset.Y,
             scenePos.Z + rotatedOffset.Z,
@@ -322,7 +320,6 @@ public class NightSceneActorController extends IScriptable {
             // For the player, the equipment system will re-apply visuals
             // when the EquipmentSystemPlayerData refreshes on next frame.
             // Force a refresh by toggling a benign status effect.
-            let gi = actorState.entity.GetGame();
             let player = actorState.entity as PlayerPuppet;
             if IsDefined(player) {
                 // Equipment will auto-refresh when slots are re-equipped
