@@ -53,6 +53,11 @@ local pendingRestore = {}
 -- Each entry: { entityRef, appName, afterTime }
 local deferredSchedule = {}
 
+-- How many times to re-issue a restore that did not take before giving up.
+-- Three attempts spans roughly 1.2s, which covers an NPC that is briefly busy
+-- without leaving a despawning one retrying forever.
+local MAX_RESTORE_ATTEMPTS = 3
+
 -- Pending genital state: when StripForScene is called with a genitalState,
 -- store it here so OnRequestComponents can pass it to StripDuringLoad
 -- Key = entityID key, Value = "soft" or "erect"
@@ -520,11 +525,47 @@ registerForEvent("onUpdate", function(delta)
                     })
                 end
 
-            -- Handle clear restore flag
-            elseif d.isClearRestore then
-                if d.restoreKey then
+            -- Did the restore land on the appearance the NPC started in?
+            elseif d.isVerifyRestore then
+                local settled = true
+                local valid = d.entityRef and d.entityRef:IsA(CName.new("ScriptedPuppet"))
+
+                if valid then
+                    -- Guarded: this runs every frame, and a stale handle here
+                    -- would otherwise take the whole onUpdate down with it.
+                    local ok, current = pcall(function()
+                        return Game.NameToString(d.entityRef:GetCurrentAppearanceName())
+                    end)
+                    if not ok then current = "" end
+                    -- An empty name means the entity has not finished streaming
+                    -- rather than that it is wearing the wrong thing, but it is
+                    -- still not the appearance we asked for, so retry either way.
+                    if current ~= d.appName and d.attempt < MAX_RESTORE_ATTEMPTS then
+                        settled = false
+                        print(string.format(
+                            "[NakedNPC] Restore did not take (is '%s', want '%s') -- retry %d/%d",
+                            current, d.appName, d.attempt + 1, MAX_RESTORE_ATTEMPTS))
+                        d.entityRef:PrefetchAppearanceChange(CName.new(d.appName))
+                        d.entityRef:ScheduleAppearanceChange(CName.new(d.appName))
+                        table.insert(deferredSchedule, {
+                            entityRef = d.entityRef,
+                            appName = d.appName,
+                            afterTime = now + 0.4,
+                            isVerifyRestore = true,
+                            restoreKey = d.restoreKey,
+                            attempt = d.attempt + 1
+                        })
+                    elseif current ~= d.appName then
+                        print("[NakedNPC] WARN: gave up restoring " .. d.appName
+                            .. " after " .. MAX_RESTORE_ATTEMPTS .. " attempts, NPC is wearing " .. current)
+                    end
+                end
+
+                -- Hold the restore flag for as long as retries are outstanding,
+                -- so nothing re-strips the NPC mid-restore. Always released in
+                -- the end, or the NPC could never be stripped again.
+                if settled and d.restoreKey then
                     pendingRestore[d.restoreKey] = nil
-                    print("[NakedNPC] Restore flag cleared for key=" .. d.restoreKey)
                 end
 
             -- Handle normal schedule
@@ -535,13 +576,21 @@ registerForEvent("onUpdate", function(delta)
                 d.entityRef:ScheduleAppearanceChange(CName.new(d.appName))
 
                 if d.isRestore and d.restoreKey then
-                    local restoreKey = d.restoreKey
+                    -- Check that it actually took. The restore goes through a
+                    -- dummy appearance (__NakedNPC_Restore__) to force a
+                    -- component reload, and the game resolves that name to some
+                    -- other entry in the NPC's appearance list. If the schedule
+                    -- back to the real appearance is dropped -- which happens
+                    -- when the NPC is busy, mid-stream or out of range -- the
+                    -- NPC is left wearing whatever the dummy resolved to, which
+                    -- is why an NPC in outfit 2 sometimes came back in outfit 3.
                     table.insert(deferredSchedule, {
-                        entityRef = nil,
-                        appName = "",
-                        afterTime = now + 0.5,
-                        isClearRestore = true,
-                        restoreKey = restoreKey
+                        entityRef = d.entityRef,
+                        appName = d.appName,
+                        afterTime = now + 0.4,
+                        isVerifyRestore = true,
+                        restoreKey = d.restoreKey,
+                        attempt = d.attempt or 1
                     })
                 end
             else
