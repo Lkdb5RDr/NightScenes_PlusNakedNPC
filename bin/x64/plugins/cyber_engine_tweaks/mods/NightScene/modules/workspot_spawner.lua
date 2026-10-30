@@ -497,19 +497,21 @@ function WorkspotSpawner.HidePlayer()
         return 0
     end
 
-    -- Merge, skipping components already tracked, so repeated calls don't grow
-    -- the list without bound.
-    local known = {}
-    for _, comp in ipairs(WorkspotSpawner.hiddenPlayerComponents) do known[comp] = true end
-    local added = 0
-    for _, comp in ipairs(hidden) do
-        if not known[comp] then
-            table.insert(WorkspotSpawner.hiddenPlayerComponents, comp)
-            added = added + 1
-        end
-    end
+    -- Replace the list rather than merging into it. HideEntity enumerates and
+    -- hides every component V currently has, so the fresh list already covers
+    -- everything the old one did, minus any component that has since detached
+    -- and no longer needs restoring.
+    --
+    -- The merge this replaces deduplicated by component handle, which never
+    -- matched: CET hands back a fresh wrapper object for the same underlying
+    -- component on every enumeration. So the list grew by V's full component
+    -- count every half-second for the length of the scene, and teardown ended
+    -- up calling TemporaryHide on the order of ten thousand times in one frame.
+    -- Nothing keyed on a component handle will hold across enumerations.
+    local previous = #WorkspotSpawner.hiddenPlayerComponents
+    WorkspotSpawner.hiddenPlayerComponents = hidden
 
-    return added, #WorkspotSpawner.hiddenPlayerComponents
+    return #hidden - previous, #hidden
 end
 
 --- Put the real V back.

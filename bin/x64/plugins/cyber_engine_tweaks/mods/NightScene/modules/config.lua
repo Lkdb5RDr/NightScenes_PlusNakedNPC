@@ -104,14 +104,16 @@ end
 --- Save current configuration to file.
 function Config.Save()
     local content = json.encode(Config.current)
-    local file = io.open(Config.filePath, "w")
+    -- io.open returns the reason as its second result. The previous version
+    -- re-opened the file to print it, which leaked a handle and printed the
+    -- file object or nil -- never the actual error.
+    local file, err = io.open(Config.filePath, "w")
     if file then
         file:write(content)
         file:close()
         print("[NightScene] Configuration saved")
     else
-        print("[NightScene] ERROR: Could not save config file, with error:")
-		print(io.open(Config.filePath, "w"))
+        print("[NightScene] ERROR: Could not save config file: " .. tostring(err))
     end
 
     -- Push updated config to Redscript framework
