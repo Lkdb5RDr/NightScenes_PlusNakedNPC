@@ -131,6 +131,13 @@ public class NightSceneHealthMonitor extends IScriptable {
             return;
         }
 
+        // Playing as Johnny. His death at the end of the flashback is a
+        // scripted quest death -- intercept it and the sequence never resolves.
+        if NightScenePlayerState.IsPlayerJohnny(player) {
+            this.ScheduleNext();
+            return;
+        }
+
         // Only skip if not in combat AND health is not critical/fatal
         let trackerComp = player.GetTargetTrackerComponent();
         let inCombat = IsDefined(trackerComp) && ArraySize(trackerComp.GetHostileThreats(false)) > 0;
@@ -208,6 +215,14 @@ protected cb func OnDeath(evt: ref<gameDeathEvent>) -> Bool {
         return wrappedMethod(evt);
     }
 
+    // Never intercept Johnny's death. This is the one that was reported:
+    // Smasher kills Johnny, the defeat scene swallows the death event, and the
+    // flashback is left with nobody dead.
+    if NightScenePlayerState.IsPlayerJohnny(this) {
+        LogChannel(n"NightScene", "OnDeath: playing as Johnny, passing through");
+        return wrappedMethod(evt);
+    }
+
     let config = mgr.GetConfig();
     if config.enabled && config.defeatEnabled {
         if !mgr.IsSceneActive() {
@@ -257,6 +272,12 @@ protected func OnEnter(stateContext: ref<StateContext>, scriptInterface: ref<Sta
         wrappedMethod(stateContext, scriptInterface);
         return;
     }
+    // Belt and braces: a scene should never be active while playing as Johnny,
+    // but this hook is the one that can hard-block a scripted quest death.
+    if NightScenePlayerState.IsPlayerJohnny(scriptInterface.executionOwner as PlayerPuppet) {
+        wrappedMethod(stateContext, scriptInterface);
+        return;
+    }
     if mgr.IsSceneActive() {
         return;
     }
@@ -268,6 +289,10 @@ protected cb func OnDeathScreenDelayEvent(evt: ref<DeathMenuDelayEvent>) -> Bool
     let mgr = NightSceneServices.Get().SceneManager();
     // NEVER suppress if intentional fatal death is executing
     if mgr.IsExecutingFatalDeath() {
+        return wrappedMethod(evt);
+    }
+    // ...or if the death belongs to Johnny rather than V.
+    if NightScenePlayerState.IsPlayingAsJohnny(GetGameInstance()) {
         return wrappedMethod(evt);
     }
     if mgr.IsSceneActive() {

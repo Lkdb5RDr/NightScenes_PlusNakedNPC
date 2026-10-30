@@ -161,6 +161,14 @@ public class NightSceneManager extends IScriptable {
             return false;
         }
 
+        // The player-controlled puppet is Johnny, not V. Everything downstream
+        // (clone spawn, equipment strip, defeat interception) assumes V, and
+        // during the flashbacks it is quest script driving the puppet.
+        if NightScenePlayerState.IsPlayingAsJohnny(GetGameInstance()) {
+            LogChannel(n"NightScene", "Suppressed: playing as Johnny");
+            return false;
+        }
+
         if !IsDefined(animDef) {
             LogChannel(n"NightScene", "ERROR: Animation definition is null");
             return false;
