@@ -368,14 +368,18 @@ local function setCloneHeadVisible(clone, visible)
                             local key = slotName .. "_" .. cName
                             if string.find(cClass, "Mesh") or cClass == "entMorphTargetSkinnedMeshComponent" then
                                 if shouldHideSlot then
-                                    if cloneHeadSavedChunkMasks[key] == nil and c.chunkMask ~= nil then
-                                        cloneHeadSavedChunkMasks[key] = c.chunkMask
+                                    -- Never zero a mask that already reads 0 --
+                                    -- see the note on the puppet pass below.
+                                    if c.chunkMask ~= nil and c.chunkMask ~= 0 then
+                                        if cloneHeadSavedChunkMasks[key] == nil then
+                                            cloneHeadSavedChunkMasks[key] = c.chunkMask
+                                        end
+                                        c.chunkMask = 0
+                                        cloneSlotHidden = cloneSlotHidden + 1
                                     end
-                                    c.chunkMask = 0
-                                    cloneSlotHidden = cloneSlotHidden + 1
                                 else
                                     local orig = cloneHeadSavedChunkMasks[key]
-                                    if orig ~= nil then
+                                    if orig ~= nil and orig ~= 0 then
                                         c.chunkMask = orig
                                         cloneSlotRestored = cloneSlotRestored + 1
                                     else
@@ -410,14 +414,31 @@ local function setCloneHeadVisible(clone, visible)
                         local cName = Game.NameToString(c:GetName())
                         pcall(function()
                             if shouldHideComp then
-                                if cloneHeadSavedChunkMasks[cName] == nil and c.chunkMask ~= nil then
-                                    cloneHeadSavedChunkMasks[cName] = c.chunkMask
+                                -- Only mask a component that is actually
+                                -- drawing something. A component reading 0 here
+                                -- is either already masked off or has not
+                                -- finished streaming -- the clone's meshes come
+                                -- in over several frames after spawn, and the
+                                -- first hide pass runs on its very first frame.
+                                -- Zeroing an uninitialised mask and saving that
+                                -- 0 as the "original" is what left the head
+                                -- missing on the way back to third person: the
+                                -- restore faithfully wrote 0 again, and the
+                                -- save guard below meant no later pass ever
+                                -- replaced it with the real value. Skipping
+                                -- those leaves the warmup passes free to catch
+                                -- the component once its mask is real;
+                                -- TemporaryHide keeps it hidden until then.
+                                if c.chunkMask ~= nil and c.chunkMask ~= 0 then
+                                    if cloneHeadSavedChunkMasks[cName] == nil then
+                                        cloneHeadSavedChunkMasks[cName] = c.chunkMask
+                                    end
+                                    c.chunkMask = 0
+                                    cloneHeadHidden = cloneHeadHidden + 1
                                 end
-                                c.chunkMask = 0
-                                cloneHeadHidden = cloneHeadHidden + 1
                             else
                                 local orig = cloneHeadSavedChunkMasks[cName]
-                                if orig ~= nil then
+                                if orig ~= nil and orig ~= 0 then
                                     c.chunkMask = orig
                                     cloneHeadRestored = cloneHeadRestored + 1
                                 else
