@@ -272,7 +272,48 @@ local headSlots = {
     "OutfitSlots.NecklaceLong",
 }
 
-local cloneHeadSavedChunkMasks = {}
+-- Every chunk on. NakedNPC's stripper reveals a mesh with exactly this literal
+-- (see stripper.lua), and it is the one reveal confirmed to work in this game.
+local CHUNK_MASK_ALL = 18446744073709551615ULL
+
+--- Hide one component of the clone.
+local function concealComponent(c)
+    local touched = false
+    pcall(function()
+        if c.chunkMask ~= nil and c.chunkMask ~= 0 then
+            c.chunkMask = 0
+            touched = true
+        end
+    end)
+    pcall(function() if c.Toggle then c:Toggle(false) end end)
+    pcall(function() if c.TemporaryHide then c:TemporaryHide(true) end end)
+    return touched
+end
+
+--- Put one component of the clone back.
+---
+--- Deliberately does NOT restore a saved chunk mask. Saving the old value on
+--- the way in and writing it back on the way out reported every component
+--- restored while the head stayed missing: the mask is a Uint64, and a
+--- round-trip through a Lua table does not reliably return the value that went
+--- in. Setting every chunk on is what NakedNPC does to reveal a mesh.
+---
+--- Each step gets its own pcall. Previously one list of steps shared a single
+--- pcall, so a throw on the first silently skipped the un-hide calls after it.
+local function revealComponent(c)
+    local touched = false
+    pcall(function()
+        if c.chunkMask ~= nil then
+            c.chunkMask = CHUNK_MASK_ALL
+            touched = true
+        end
+    end)
+    pcall(function()
+        if c.Toggle and c.IsEnabled and not c:IsEnabled() then c:Toggle(true) end
+    end)
+    pcall(function() if c.TemporaryHide then c:TemporaryHide(false) end end)
+    return touched
+end
 
 local function isCloneHeadOrFaceComponent(comp)
     local cName = Game.NameToString(comp:GetName()):lower()
@@ -364,32 +405,19 @@ local function setCloneHeadVisible(clone, visible)
                     for _, c in ipairs(itemEntity:GetComponents()) do
                         pcall(function()
                             local cClass = Game.NameToString(c:GetClassName())
-                            local cName = Game.NameToString(c:GetName())
-                            local key = slotName .. "_" .. cName
-                            if string.find(cClass, "Mesh") or cClass == "entMorphTargetSkinnedMeshComponent" then
-                                if shouldHideSlot then
-                                    -- Never zero a mask that already reads 0 --
-                                    -- see the note on the puppet pass below.
-                                    if c.chunkMask ~= nil and c.chunkMask ~= 0 then
-                                        if cloneHeadSavedChunkMasks[key] == nil then
-                                            cloneHeadSavedChunkMasks[key] = c.chunkMask
-                                        end
-                                        c.chunkMask = 0
-                                        cloneSlotHidden = cloneSlotHidden + 1
-                                    end
-                                else
-                                    local orig = cloneHeadSavedChunkMasks[key]
-                                    if orig ~= nil and orig ~= 0 then
-                                        c.chunkMask = orig
-                                        cloneSlotRestored = cloneSlotRestored + 1
-                                    else
-                                        cloneSlotUnsaved = cloneSlotUnsaved + 1
-                                    end
+                            local isMesh = string.find(cClass, "Mesh")
+                                or cClass == "entMorphTargetSkinnedMeshComponent"
+                            if shouldHideSlot then
+                                if concealComponent(c) and isMesh then
+                                    cloneSlotHidden = cloneSlotHidden + 1
+                                end
+                            else
+                                if revealComponent(c) then
+                                    if isMesh then cloneSlotRestored = cloneSlotRestored + 1 end
+                                elseif isMesh then
+                                    cloneSlotUnsaved = cloneSlotUnsaved + 1
                                 end
                             end
-                            c.isEnabled = not shouldHideSlot
-                            if c.Toggle then c:Toggle(not shouldHideSlot) end
-                            if c.TemporaryHide then c:TemporaryHide(shouldHideSlot) end
                         end)
                     end
                 end
@@ -402,62 +430,43 @@ local function setCloneHeadVisible(clone, visible)
         if clone.GetComponents then
             local comps = clone:GetComponents()
             for _, c in ipairs(comps) do
-                local cClass = Game.NameToString(c:GetClassName())
-                if string.find(cClass, "Mesh") or cClass == "entMorphTargetSkinnedMeshComponent" then
-                    if isCloneHeadOrFaceComponent(c) then
-                        local isHair = isHairComponent(c)
-                        local shouldHideComp = (not visible)
-                        if isHair and keepHair then
-                            shouldHideComp = false
-                        end
-
-                        local cName = Game.NameToString(c:GetName())
-                        pcall(function()
-                            if shouldHideComp then
-                                -- Only mask a component that is actually
-                                -- drawing something. A component reading 0 here
-                                -- is either already masked off or has not
-                                -- finished streaming -- the clone's meshes come
-                                -- in over several frames after spawn, and the
-                                -- first hide pass runs on its very first frame.
-                                -- Zeroing an uninitialised mask and saving that
-                                -- 0 as the "original" is what left the head
-                                -- missing on the way back to third person: the
-                                -- restore faithfully wrote 0 again, and the
-                                -- save guard below meant no later pass ever
-                                -- replaced it with the real value. Skipping
-                                -- those leaves the warmup passes free to catch
-                                -- the component once its mask is real;
-                                -- TemporaryHide keeps it hidden until then.
-                                if c.chunkMask ~= nil and c.chunkMask ~= 0 then
-                                    if cloneHeadSavedChunkMasks[cName] == nil then
-                                        cloneHeadSavedChunkMasks[cName] = c.chunkMask
-                                    end
-                                    c.chunkMask = 0
-                                    cloneHeadHidden = cloneHeadHidden + 1
-                                end
-                            else
-                                local orig = cloneHeadSavedChunkMasks[cName]
-                                if orig ~= nil and orig ~= 0 then
-                                    c.chunkMask = orig
-                                    cloneHeadRestored = cloneHeadRestored + 1
-                                else
-                                    cloneHeadUnsaved = cloneHeadUnsaved + 1
-                                end
-                            end
-                            c.isEnabled = not shouldHideComp
-                            if c.Toggle then c:Toggle(not shouldHideComp) end
-                            if c.TemporaryHide then c:TemporaryHide(shouldHideComp) end
-                        end)
+                -- Per component, so that one that throws on GetClassName or on
+                -- the name predicate cannot abort the rest of the pass. The
+                -- hide runs 60 warmup frames and then every 30, so it survived
+                -- an early abort; the restore runs once, and did not.
+                pcall(function()
+                    local cClass = Game.NameToString(c:GetClassName())
+                    if not (string.find(cClass, "Mesh") or cClass == "entMorphTargetSkinnedMeshComponent") then
+                        return
                     end
-                end
+                    if not isCloneHeadOrFaceComponent(c) then
+                        return
+                    end
+
+                    local shouldHideComp = (not visible)
+                    if keepHair and isHairComponent(c) then
+                        shouldHideComp = false
+                    end
+
+                    if shouldHideComp then
+                        if concealComponent(c) then
+                            cloneHeadHidden = cloneHeadHidden + 1
+                        end
+                    else
+                        if revealComponent(c) then
+                            cloneHeadRestored = cloneHeadRestored + 1
+                        else
+                            cloneHeadUnsaved = cloneHeadUnsaved + 1
+                        end
+                    end
+                end)
             end
         end
     end)
 
     print(string.format(
-        "[NightScene] CloneHead: visible=%s | puppet hid %d / restored %d / unsaved %d"
-            .. " | %d head slots: hid %d / restored %d / unsaved %d",
+        "[NightScene] CloneHead: visible=%s | puppet hid %d / shown %d / untouched %d"
+            .. " | %d head slots: hid %d / shown %d / untouched %d",
         tostring(visible), cloneHeadHidden, cloneHeadRestored, cloneHeadUnsaved,
         cloneSlotsWithItem, cloneSlotHidden, cloneSlotRestored, cloneSlotUnsaved))
 end
@@ -816,10 +825,6 @@ function WorkspotSpawner.Cleanup()
     WorkspotSpawner.pendingCloneDelay = nil
     WorkspotSpawner.pendingCloneRecord = nil
     WorkspotSpawner.npcActorIDs = {}
-
-    -- The clone is gone, so chunk masks saved off it are meaningless now --
-    -- keeping them would let a stale mask be restored onto the NEXT clone.
-    cloneHeadSavedChunkMasks = {}
 
     -- Put NakedNPC's enabled flag back if the scene turned it on. Only logs
     -- when something actually changed -- "did not need to be disabled" fires
