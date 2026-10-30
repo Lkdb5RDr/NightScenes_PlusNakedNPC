@@ -473,10 +473,30 @@ registerForEvent("onInit", function()
             pendingNaked[key].step = 2
             pendingNaked[key].timestamp = os.clock()
 
+            -- Schedule the NPC's own appearance, not a dummy name. Step 2 is
+            -- the reload the strip runs on, so whatever appearance the NPC
+            -- lands on here is the one it wears for the whole scene. The old
+            -- "__NakedNPC_Step2__" is not a real appearance, and the game
+            -- resolves an unknown name to some other entry in the NPC's
+            -- appearance list -- which is why an NPC in outfit 2 sometimes
+            -- turned up in outfit 3 the moment the scene started.
+            table.insert(deferredSchedule, {
+                entityRef = pending.entityRef,
+                appName = pending.originalAppearance,
+                afterTime = os.clock() + 0.15
+            })
+
+            -- If step 1's "Cycle" happened to resolve back to the original
+            -- appearance, the schedule above is a no-op, no reload comes, and
+            -- the NPC is never stripped. Fall back to the dummy in that case:
+            -- a wrong outfit is better than a clothed NPC mid-scene. Only
+            -- fires if step 2 has not run by then.
             table.insert(deferredSchedule, {
                 entityRef = pending.entityRef,
                 appName = "__NakedNPC_Step2__",
-                afterTime = os.clock() + 0.15
+                afterTime = os.clock() + 0.65,
+                isStep2Fallback = true,
+                stepKey = key
             })
             return
         end
@@ -523,6 +543,17 @@ registerForEvent("onUpdate", function(delta)
                         appName = d.midCycleApp,
                         afterTime = now + 0.1
                     })
+                end
+
+            -- Step 2 never came: force it with the dummy appearance.
+            elseif d.isStep2Fallback then
+                local pending = d.stepKey and pendingNaked[d.stepKey]
+                if pending and pending.step >= 2
+                    and d.entityRef and d.entityRef:IsA(CName.new("ScriptedPuppet")) then
+                    print("[NakedNPC] Step 2 did not fire for " .. d.stepKey
+                        .. " -- forcing reload via dummy appearance")
+                    d.entityRef:PrefetchAppearanceChange(CName.new(d.appName))
+                    d.entityRef:ScheduleAppearanceChange(CName.new(d.appName))
                 end
 
             -- Did the restore land on the appearance the NPC started in?
