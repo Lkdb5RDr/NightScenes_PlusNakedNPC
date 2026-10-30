@@ -2,12 +2,20 @@
 -- =================================
 -- Universal Naked NPC Appearances Mod v0.3.0
 --
--- ARCHITECTURE (two-step appearance reload cycle):
+-- ARCHITECTURE (three-step appearance reload cycle):
 -- 1. Trigger: _naked ScheduleAppearanceChange OR UI Strip button
 -- 2. Flag entity in pendingNaked table (step=0)
 -- 3. Schedule "Cycle" appearance → forces component reload (step=1)
--- 4. OnRequestComponents fires for "Cycle" → schedule back to original (step=2)
--- 5. OnRequestComponents fires for original → DO MESH SWAPS + STRIP HERE
+-- 4. OnRequestComponents fires → schedule "__NakedNPC_Step2__" (step=2)
+-- 5. OnRequestComponents fires → schedule back to original (step=3)
+-- 6. OnRequestComponents fires for original → DO MESH SWAPS + STRIP HERE
+--
+-- Step 4 exists because the game resolves "Cycle" back to the NPC's own
+-- appearance, so going straight to the original from there is a no-op and no
+-- reload arrives. An unknown name reliably moves the NPC OFF its appearance,
+-- which is what makes scheduling the real one afterwards an actual change.
+-- The strip must land on the ORIGINAL appearance: whatever the NPC is wearing
+-- at step 6 is what it wears for the rest of the scene.
 --
 -- RESTORE ARCHITECTURE:
 -- 1. Trigger: non-naked ScheduleAppearanceChange on a tracked entity
@@ -468,40 +476,56 @@ registerForEvent("onInit", function()
 
         print("[NakedNPC] OnRequestComponents fired (key=" .. key .. " step=" .. pending.step .. ")")
 
+        -- Three reloads, and only the last one matters. "Cycle" resolves back
+        -- to the NPC's own appearance, so scheduling the original after it is
+        -- a no-op and no reload arrives. The dummy is what reliably moves the
+        -- NPC OFF its appearance, which is what makes scheduling the real one
+        -- afterwards an actual change. Stripping on the dummy's reload -- which
+        -- is what used to happen -- left the NPC in whatever other entry of its
+        -- appearance list the game picked for that unknown name: an NPC in
+        -- outfit 2 turning up in outfit 3 the moment the scene started.
         if pending.step == 1 then
-            print("[NakedNPC] OnRequestComponents step 1: deferring schedule back to " .. pending.originalAppearance)
+            print("[NakedNPC] OnRequestComponents step 1: moving off " .. pending.originalAppearance)
             pendingNaked[key].step = 2
             pendingNaked[key].timestamp = os.clock()
 
-            -- Schedule the NPC's own appearance, not a dummy name. Step 2 is
-            -- the reload the strip runs on, so whatever appearance the NPC
-            -- lands on here is the one it wears for the whole scene. The old
-            -- "__NakedNPC_Step2__" is not a real appearance, and the game
-            -- resolves an unknown name to some other entry in the NPC's
-            -- appearance list -- which is why an NPC in outfit 2 sometimes
-            -- turned up in outfit 3 the moment the scene started.
+            table.insert(deferredSchedule, {
+                entityRef = pending.entityRef,
+                appName = "__NakedNPC_Step2__",
+                afterTime = os.clock() + 0.15
+            })
+            return
+        end
+
+        if pending.step == 2 then
+            print("[NakedNPC] OnRequestComponents step 2: scheduling back to " .. pending.originalAppearance)
+            pendingNaked[key].step = 3
+            pendingNaked[key].timestamp = os.clock()
+
+            -- The reload the strip runs on. Whatever appearance the NPC lands
+            -- on here is what it wears for the rest of the scene.
             table.insert(deferredSchedule, {
                 entityRef = pending.entityRef,
                 appName = pending.originalAppearance,
                 afterTime = os.clock() + 0.15
             })
 
-            -- If step 1's "Cycle" happened to resolve back to the original
-            -- appearance, the schedule above is a no-op, no reload comes, and
-            -- the NPC is never stripped. Fall back to the dummy in that case:
-            -- a wrong outfit is better than a clothed NPC mid-scene. Only
-            -- fires if step 2 has not run by then.
+            -- Only reachable if the dummy resolved to the original appearance
+            -- after all, making the schedule above a no-op. Nothing can be done
+            -- about it from here: forcing the dummy again would resolve to the
+            -- same place. Drop the entry so the NPC is not left pending for
+            -- ever, which would block every later attempt to strip it.
             table.insert(deferredSchedule, {
                 entityRef = pending.entityRef,
-                appName = "__NakedNPC_Step2__",
+                appName = "",
                 afterTime = os.clock() + 0.65,
-                isStep2Fallback = true,
+                isStep3Timeout = true,
                 stepKey = key
             })
             return
         end
 
-        if pending.step >= 2 then
+        if pending.step >= 3 then
             local genitalState = pendingGenitalState[key]
             pendingGenitalState[key] = nil
             pendingNaked[key] = nil
@@ -511,7 +535,15 @@ registerForEvent("onInit", function()
             -- StripDuringLoad logs what actually happened once it knows the body
             -- type. Printing "(genitals: erect)" here made it look like genitals
             -- were being applied to every NPC.
-            print("[NakedNPC] OnRequestComponents step 2: applying mesh swaps for " .. pending.originalAppearance)
+            -- Print what the NPC is actually wearing, not the name we saved.
+            -- Printing the saved name here hid this whole bug: the line read
+            -- "...for poor_01" while the NPC on screen was in poor_03.
+            local okApp, wearing = pcall(function()
+                return Game.NameToString(self:GetCurrentAppearanceName())
+            end)
+            if not okApp or wearing == "" then wearing = "<unknown>" end
+            print("[NakedNPC] OnRequestComponents step 3: applying mesh swaps, wearing "
+                .. wearing .. " (saved " .. pending.originalAppearance .. ")")
             local savedComponents = Stripper.StripDuringLoad(self, genitalState)
             print("[NakedNPC] About to track NPC, savedComponents count=" .. #savedComponents)
             NPCTracker.Track(self, pending.originalAppearance, savedComponents)
@@ -545,15 +577,15 @@ registerForEvent("onUpdate", function(delta)
                     })
                 end
 
-            -- Step 2 never came: force it with the dummy appearance.
-            elseif d.isStep2Fallback then
+            -- The final reload never came, so the NPC is still dressed. Give up
+            -- rather than leave it pending for ever and unstrippable later.
+            elseif d.isStep3Timeout then
                 local pending = d.stepKey and pendingNaked[d.stepKey]
-                if pending and pending.step >= 2
-                    and d.entityRef and d.entityRef:IsA(CName.new("ScriptedPuppet")) then
-                    print("[NakedNPC] Step 2 did not fire for " .. d.stepKey
-                        .. " -- forcing reload via dummy appearance")
-                    d.entityRef:PrefetchAppearanceChange(CName.new(d.appName))
-                    d.entityRef:ScheduleAppearanceChange(CName.new(d.appName))
+                if pending and pending.step >= 3 then
+                    print("[NakedNPC] WARN: reload back to " .. pending.originalAppearance
+                        .. " never arrived for " .. d.stepKey .. " -- NPC left dressed")
+                    pendingNaked[d.stepKey] = nil
+                    pendingGenitalState[d.stepKey] = nil
                 end
 
             -- Did the restore land on the appearance the NPC started in?
